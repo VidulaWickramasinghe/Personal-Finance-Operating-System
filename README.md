@@ -1,2 +1,39 @@
-# Personal-Finance-Operating-System
-💎 CashFlow OS Enterprise
+# CashFlow OS
+
+CashFlow OS is a private, responsive personal-finance workspace for managing
+accounts, transactions, transfers, category budgets, savings goals, bills, and
+exportable reports.
+
+## Product capabilities
+
+- Full create, read, update, delete, duplicate, search, filter, sort, bulk-edit,
+  archive, restore, and pagination workflows
+- Atomic account balance updates for transactions, transfers, and bill payments
+- Purpose-aware accounts for salary, daily spending, bills, international
+  payments, and protected savings
+- Budget alerts, goal projections, financial-health indicators, reports, and
+  CSV, Excel-compatible, and print/PDF exports
+- Owner-scoped D1 persistence and private R2 receipt storage
+- Responsive light/dark interface with keyboard shortcuts and accessible
+  dialogs, tables, loading states, and feedback
+
+## Local development
+
+Requires Node.js `>=22.13.0`.
+
+```bash
+pnpm install
+pnpm run dev
+pnpm run lint
+pnpm run build
+```
+
+Generate a new D1 migration after changing `db/schema.ts`:
+
+```bash
+pnpm run db:generate
+```
+
+Sites bindings are declared in `.openai/hosting.json`. The published app uses
+the authenticated workspace identity headers supplied by OpenAI Sites; local
+development uses a dedicated demo identity.
