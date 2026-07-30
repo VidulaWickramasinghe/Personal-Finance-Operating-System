@@ -28,6 +28,29 @@ test("local development config binds D1 to the checked-in migrations", async () 
   assert.equal(wrangler.r2_buckets[0].binding, "RECEIPTS");
 });
 
+test("finance requests repair an empty or partially migrated D1 schema", async () => {
+  const [finance, health, migrations] = await Promise.all([
+    readFile(new URL("../db/finance.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/api/finance/health/route.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../db/migrations.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(finance, /await ensureFinanceSchema\(\)/);
+  assert.match(health, /await ensureFinanceSchema\(\)/);
+  assert.match(health, /FROM sqlite_master/);
+  assert.match(health, /Cache-Control.*no-store/);
+  assert.match(migrations, /0000_short_loki\.sql\?raw/);
+  assert.match(migrations, /0001_broad_big_bertha\.sql\?raw/);
+  assert.match(migrations, /0002_wonderful_meggan\.sql\?raw/);
+  assert.match(migrations, /CREATE TABLE IF NOT EXISTS/);
+  assert.match(migrations, /PRAGMA table_info/);
+  assert.match(migrations, /\.prepare\(statement\)\.run\(\)/);
+  assert.doesNotMatch(migrations, /\.exec\(/);
+});
+
 test("production worker manifest uses Sites bindings, not local Wrangler paths", async () => {
   const manifest = JSON.parse(
     await readFile(
