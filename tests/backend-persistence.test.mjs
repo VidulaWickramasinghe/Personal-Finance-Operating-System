@@ -7,24 +7,41 @@ test("production uses the Cloudflare worker build that packages storage metadata
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
 
-  assert.equal(packageJson.scripts.build, "vite build");
-  assert.equal(packageJson.scripts.start, "vite preview");
+  assert.match(packageJson.scripts.build, /vinext build/);
+  assert.match(packageJson.scripts.start, /vinext start/);
   assert.match(packageJson.scripts.dev, /pnpm run dev:prepare/);
   assert.equal(
     packageJson.scripts["dev:prepare"],
-    "wrangler d1 migrations apply DB --local --config wrangler.jsonc",
+    "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
   );
 });
 
 test("local development config binds D1 to the checked-in migrations", async () => {
   const wrangler = JSON.parse(
-    await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
+    await readFile(new URL("../wrangler.local.jsonc", import.meta.url), "utf8"),
   );
   const [database] = wrangler.d1_databases;
 
   assert.equal(database.binding, "DB");
   assert.equal(database.migrations_dir, "drizzle");
   assert.equal(wrangler.r2_buckets[0].binding, "RECEIPTS");
+});
+
+test("production worker manifest uses Sites bindings, not local Wrangler paths", async () => {
+  const manifest = JSON.parse(
+    await readFile(
+      new URL("../dist/server/wrangler.json", import.meta.url),
+      "utf8",
+    ),
+  );
+
+  assert.equal(manifest.name, "cashflow-os");
+  assert.equal(manifest.topLevelName, "cashflow-os");
+  assert.equal(manifest.d1_databases[0]?.binding, "DB");
+  assert.equal(manifest.r2_buckets[0]?.binding, "RECEIPTS");
+  assert.equal("configPath" in manifest, false);
+  assert.equal("userConfigPath" in manifest, false);
+  assert.doesNotMatch(JSON.stringify(manifest), /cashflow-os-local/);
 });
 
 test("finance records are loaded from and saved to backend APIs", async () => {
