@@ -381,14 +381,23 @@ function payloadForApi(kind: ResourceKind, value: any) {
   return value;
 }
 
-export default function CashflowApp({ userName }: { userName: string }) {
-  const [data, setData] = useState<FinanceData>(EMPTY_FINANCE_DATA);
+export default function CashflowApp({
+  userName,
+  initialData,
+}: {
+  userName: string;
+  initialData?: unknown;
+}) {
+  const hasInitialData = initialData !== undefined;
+  const [data, setData] = useState<FinanceData>(() =>
+    hasInitialData ? normalizeFinance(initialData) : EMPTY_FINANCE_DATA,
+  );
   const [active, setActive] = useState<ModuleId>("overview");
   const [editor, setEditor] = useState<EditorState>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedData, setHasLoadedData] = useState(false);
+  const [isLoading, setIsLoading] = useState(!hasInitialData);
+  const [hasLoadedData, setHasLoadedData] = useState(hasInitialData);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
@@ -434,9 +443,9 @@ export default function CashflowApp({ userName }: { userName: string }) {
   }, []);
 
   useEffect(() => {
-    const task = window.setTimeout(() => void loadData(), 0);
+    const task = window.setTimeout(() => void loadData(hasInitialData), 0);
     return () => window.clearTimeout(task);
-  }, [loadData]);
+  }, [hasInitialData, loadData]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("cashflow-theme");

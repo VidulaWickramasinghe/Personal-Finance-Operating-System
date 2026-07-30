@@ -41,11 +41,15 @@ test("the finance API initializes D1 even when vinext is started directly", asyn
 });
 
 test("finance records are loaded from and saved to backend APIs", async () => {
-  const app = await readFile(
-    new URL("../app/cashflow-app.tsx", import.meta.url),
-    "utf8",
-  );
+  const [app, page] = await Promise.all([
+    readFile(new URL("../app/cashflow-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  ]);
 
+  assert.match(page, /initialData=\{initialData\}/);
+  assert.match(page, /await loadFinanceSnapshot\(financeUser\.id\)/);
+  assert.match(app, /hasInitialData \? normalizeFinance\(initialData\)/);
+  assert.match(app, /loadData\(hasInitialData\)/);
   assert.match(app, /const controller = new AbortController\(\)/);
   assert.match(app, /signal: controller\.signal/);
   assert.match(app, /controller\.abort\(\)/);
