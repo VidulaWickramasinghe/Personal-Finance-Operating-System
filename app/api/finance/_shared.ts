@@ -31,6 +31,11 @@ export async function financeRoute(
 
     const message =
       error instanceof Error ? error.message : "Unexpected finance data error";
+    console.error("Finance request failed.", {
+      method: request.method,
+      path: new URL(request.url).pathname,
+      message,
+    });
     const lower = message.toLowerCase();
     if (
       lower.includes("d1 binding") ||
