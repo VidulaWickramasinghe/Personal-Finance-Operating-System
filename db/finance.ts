@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { getD1Binding, getDb } from ".";
+import { ensureFinanceStorage } from "./migrations";
 import {
   accounts,
   activity,
@@ -16,7 +17,10 @@ const EMAIL_HEADER = "oai-authenticated-user-email";
 const NAME_HEADER = "oai-authenticated-user-full-name";
 const NAME_ENCODING_HEADER = "oai-authenticated-user-full-name-encoding";
 
-export const CURRENT_WORKSPACE_VERSION = 1;
+// Version 2 deliberately re-runs the legacy-demo cleanup for workspaces that
+// were already opened while the original showcase data was present. It also
+// restores the required category catalogue without inserting financial data.
+export const CURRENT_WORKSPACE_VERSION = 2;
 
 type SystemCategory = {
   slug: string;
@@ -124,6 +128,7 @@ export async function getFinanceUser(request: Request): Promise<FinanceUser> {
   const identity = identityFromRequest(request);
   if (!identity) throw new FinanceAuthError();
 
+  await ensureFinanceStorage();
   const db = getDb();
   await db
     .insert(users)
