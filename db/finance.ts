@@ -10,6 +10,7 @@ import {
   goals,
   transactions,
   transfers,
+  userPreferences,
   users,
 } from "./schema";
 
@@ -152,7 +153,16 @@ export async function getFinanceUser(request: Request): Promise<FinanceUser> {
     .limit(1);
 
   if (!user) throw new Error("Unable to create or load the finance profile.");
-  return initializeFinanceWorkspace(user);
+  const initialized = await initializeFinanceWorkspace(user);
+  await ensureUserPreferences(initialized.id);
+  return initialized;
+}
+
+async function ensureUserPreferences(userId: string) {
+  await getDb()
+    .insert(userPreferences)
+    .values({ userId })
+    .onConflictDoNothing({ target: userPreferences.userId });
 }
 
 export async function initializeFinanceWorkspace(
@@ -373,6 +383,8 @@ export async function loadFinanceSnapshot(userId: string) {
     goalRows,
     billRows,
     activityRows,
+    preferenceRows,
+    profileRows,
   ] = await Promise.all([
     db
       .select()
@@ -415,6 +427,16 @@ export async function loadFinanceSnapshot(userId: string) {
       .where(eq(activity.userId, userId))
       .orderBy(desc(activity.createdAt))
       .limit(40),
+    db
+      .select()
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1),
+    db
+      .select({ defaultCurrency: users.defaultCurrency })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1),
   ]);
 
   const monthlyTransactions = transactionRows.filter(
@@ -486,6 +508,15 @@ export async function loadFinanceSnapshot(userId: string) {
     }, {});
 
   return {
+    preferences: {
+      defaultCurrency: profileRows[0]?.defaultCurrency ?? "AUD",
+      timezone: preferenceRows[0]?.timezone ?? "Australia/Melbourne",
+      language: preferenceRows[0]?.language ?? "en-AU",
+      billReminders: preferenceRows[0]?.billReminders ?? true,
+      budgetAlerts: preferenceRows[0]?.budgetAlerts ?? true,
+      largeTransactionAlerts:
+        preferenceRows[0]?.largeTransactionAlerts ?? true,
+    },
     summary: {
       totalBalanceCents,
       monthlyIncomeCents,
