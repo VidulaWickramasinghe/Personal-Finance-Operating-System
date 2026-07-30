@@ -3201,7 +3201,8 @@ input[type="radio"] {
   font-size: 18px;
 }
 
-.editor-drawer > form {
+.editor-drawer > form,
+.settings-panel > form {
   min-height: 0;
   display: flex;
   flex: 1;
@@ -3232,6 +3233,10 @@ input[type="radio"] {
   padding: 14px 22px;
   border-top: 1px solid var(--line);
   background: var(--surface);
+}
+
+.drawer-form-error {
+  margin: 0 22px 12px;
 }
 
 .transaction-type-switch {

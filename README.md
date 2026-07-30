@@ -14,6 +14,8 @@ exportable reports.
 - Budget alerts, goal projections, financial-health indicators, reports, and
   CSV, Excel-compatible, and print/PDF exports
 - Owner-scoped D1 persistence and private R2 receipt storage
+- Cross-device regional and notification preferences stored with the workspace
+- Receipt names, types, sizes, and object keys linked to their transactions
 - Clean first-run onboarding with no fabricated balances or financial activity
 - An idempotent system category catalogue for income, expenses, bills, and budgets
 - Responsive light/dark interface with keyboard shortcuts and accessible
@@ -31,7 +33,7 @@ pnpm run build
 ```
 
 `pnpm run dev` applies all pending D1 migrations to the project-local database
-before starting vinext, so a fresh checkout can use the finance API immediately.
+before starting Vite/vinext, so a fresh checkout can use the finance API immediately.
 To apply them without starting the app, run `pnpm run dev:prepare`.
 
 Generate a new D1 migration after changing `db/schema.ts`:

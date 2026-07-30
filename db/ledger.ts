@@ -16,6 +16,10 @@ export type TransactionMutation = {
   tagsJson: string;
   notes: string;
   receiptUrl: string | null;
+  receiptKey: string | null;
+  receiptName: string | null;
+  receiptContentType: string | null;
+  receiptSize: number | null;
   location: string | null;
   isRecurring: boolean;
   status: "pending" | "completed" | "cancelled";
@@ -44,8 +48,9 @@ export async function createTransaction(
         `INSERT INTO transactions (
           id, user_id, account_id, category_id, title, description,
           amount_cents, type, occurred_at, merchant, payment_method,
-          tags_json, notes, receipt_url, location, is_recurring, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          tags_json, notes, receipt_url, receipt_key, receipt_name,
+          receipt_content_type, receipt_size, location, is_recurring, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -62,6 +67,10 @@ export async function createTransaction(
         input.tagsJson,
         input.notes,
         input.receiptUrl,
+        input.receiptKey,
+        input.receiptName,
+        input.receiptContentType,
+        input.receiptSize,
         input.location,
         input.isRecurring ? 1 : 0,
         input.status,
@@ -110,7 +119,8 @@ export async function updateTransaction(
           account_id = ?, category_id = ?, title = ?, description = ?,
           amount_cents = ?, type = ?, occurred_at = ?, merchant = ?,
           payment_method = ?, tags_json = ?, notes = ?, receipt_url = ?,
-          location = ?, is_recurring = ?, status = ?,
+          receipt_key = ?, receipt_name = ?, receipt_content_type = ?,
+          receipt_size = ?, location = ?, is_recurring = ?, status = ?,
           updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         WHERE id = ? AND user_id = ?`,
       )
@@ -127,6 +137,10 @@ export async function updateTransaction(
         input.tagsJson,
         input.notes,
         input.receiptUrl,
+        input.receiptKey,
+        input.receiptName,
+        input.receiptContentType,
+        input.receiptSize,
         input.location,
         input.isRecurring ? 1 : 0,
         input.status,

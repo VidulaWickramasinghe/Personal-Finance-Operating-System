@@ -9,7 +9,8 @@ test("production uses the Cloudflare worker build that packages storage metadata
 
   assert.match(packageJson.scripts.build, /vinext build/);
   assert.match(packageJson.scripts.start, /vinext start/);
-  assert.match(packageJson.scripts.dev, /pnpm run dev:prepare/);
+  assert.match(packageJson.scripts.dev, /npm run dev:prepare/);
+  assert.match(packageJson.scripts.dev, /vite/);
   assert.equal(
     packageJson.scripts["dev:prepare"],
     "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
@@ -53,6 +54,9 @@ test("finance records are loaded from and saved to backend APIs", async () => {
   assert.match(app, /fetch\("\/api\/finance", \{ cache: "no-store" \}\)/);
   assert.match(app, /method: editingId \? "PATCH" : "POST"/);
   assert.match(app, /await loadData\(true\)/);
+  assert.match(app, /\/api\/finance\/preferences/);
+  assert.match(app, /receiptContentType/);
+  assert.match(app, /receiptSize/);
   assert.doesNotMatch(app, /const optimistic/);
 });
 

@@ -21,6 +21,33 @@ type PersistedTransactionMutation = Omit<
   status: string;
 };
 
+function nullableText(
+  payload: Record<string, unknown>,
+  key: string,
+  fallback: string | null,
+) {
+  const value = payload[key];
+  if (value === undefined) return fallback;
+  if (value === null || value === "") return null;
+  if (typeof value !== "string") {
+    throw new ApiInputError(`${key} must be text or null.`);
+  }
+  return value.trim() || null;
+}
+
+function nullableReceiptSize(value: unknown, fallback: number | null) {
+  if (value === undefined) return fallback;
+  if (value === null) return null;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 0
+  ) {
+    throw new ApiInputError("receiptSize must be a non-negative integer or null.");
+  }
+  return value;
+}
+
 export function transactionInput(
   payload: Record<string, unknown>,
   existing?: PersistedTransactionMutation,
@@ -105,9 +132,21 @@ export function transactionInput(
         ? existing.notes
         : optionalText(payload, "notes") ?? "",
     receiptUrl:
-      payload.receiptUrl === undefined && existing
-        ? existing.receiptUrl
-        : optionalText(payload, "receiptUrl", null as unknown as string),
+      nullableText(payload, "receiptUrl", existing?.receiptUrl ?? null),
+    receiptKey:
+      nullableText(payload, "receiptKey", existing?.receiptKey ?? null),
+    receiptName:
+      nullableText(payload, "receiptName", existing?.receiptName ?? null),
+    receiptContentType:
+      nullableText(
+        payload,
+        "receiptContentType",
+        existing?.receiptContentType ?? null,
+      ),
+    receiptSize: nullableReceiptSize(
+      payload.receiptSize,
+      existing?.receiptSize ?? null,
+    ),
     location:
       payload.location === undefined && existing
         ? existing.location
