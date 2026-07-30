@@ -64,6 +64,17 @@ test("forwarded Codespaces previews use the isolated local identity", async () =
   assert.match(vite, /allowedHosts: \["\.app\.github\.dev"\]/);
 });
 
+test("settings save handler is defined and wired into the preferences panel", async () => {
+  const app = await readFile(
+    new URL("../app/cashflow-app.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(app, /const savePreferences = useCallback\(\(\) =>/);
+  assert.match(app, /onSave=\{savePreferences\}/);
+  assert.match(app, /onClick=\{onSave\}>Save preferences/);
+});
+
 test("workspace initialization removes demo finance rows and keeps only required catalogue data", async () => {
   const finance = await readFile(
     new URL("../db/finance.ts", import.meta.url),
