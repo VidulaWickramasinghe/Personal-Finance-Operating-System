@@ -8,6 +8,9 @@ async function request(path, options = {}) {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      "oai-authenticated-user-email": "integration@cashflow.test",
+      "oai-authenticated-user-full-name": "CashFlow%20Integration",
+      "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
       ...options.headers,
     },
   });
