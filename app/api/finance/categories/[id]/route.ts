@@ -58,6 +58,20 @@ export async function DELETE(request: Request, context: Context) {
   const { id } = await context.params;
   return financeRoute(request, async (user) => {
     const db = getDb();
+    const [existing] = await db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.id, id), eq(categories.userId, user.id)))
+      .limit(1);
+
+    if (!existing) throw new ApiInputError("Category not found.", 404);
+    if (existing.isSystem) {
+      throw new ApiInputError(
+        "Built-in categories are required by the finance workspace and cannot be deleted.",
+        409,
+      );
+    }
+
     const [item] = await db
       .delete(categories)
       .where(and(eq(categories.id, id), eq(categories.userId, user.id)))

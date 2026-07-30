@@ -99,10 +99,6 @@ const EMPTY_FINANCE_DATA: FinanceData = {
   activity: [],
 };
 
-function uniqueId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
 function toNumber(value: FormDataEntryValue | null, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -361,14 +357,23 @@ function payloadForApi(kind: ResourceKind, value: any) {
   return value;
 }
 
-export default function CashflowApp({ userName }: { userName: string }) {
-  const [data, setData] = useState<FinanceData>(EMPTY_FINANCE_DATA);
+export default function CashflowApp({
+  userName,
+  initialData,
+}: {
+  userName: string;
+  initialData?: unknown;
+}) {
+  const hasInitialData = initialData !== undefined;
+  const [data, setData] = useState<FinanceData>(() =>
+    hasInitialData ? normalizeFinance(initialData) : EMPTY_FINANCE_DATA,
+  );
   const [active, setActive] = useState<ModuleId>("overview");
   const [editor, setEditor] = useState<EditorState>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedData, setHasLoadedData] = useState(false);
+  const [isLoading, setIsLoading] = useState(!hasInitialData);
+  const [hasLoadedData, setHasLoadedData] = useState(hasInitialData);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
@@ -380,8 +385,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetch("/api/finance", { cache: "no-store" });
+      const response = await fetch("/api/finance", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!response.ok) {
         const failure = await response
           .json()
@@ -395,20 +405,23 @@ export default function CashflowApp({ userName }: { userName: string }) {
       return true;
     } catch (error) {
       setLoadError(
-        error instanceof Error
+        error instanceof DOMException && error.name === "AbortError"
+          ? "Finance storage took too long to respond. Check the development server and try again."
+          : error instanceof Error
           ? error.message
           : "Could not load your finance data.",
       );
       return false;
     } finally {
+      window.clearTimeout(timeout);
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const task = window.setTimeout(() => void loadData(), 0);
+    const task = window.setTimeout(() => void loadData(hasInitialData), 0);
     return () => window.clearTimeout(task);
-  }, [loadData]);
+  }, [hasInitialData, loadData]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("cashflow-theme");
@@ -486,37 +499,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
   const saveResource = useCallback(
     async (kind: ResourceKind, item: any, editingId?: string) => {
       const resource = API_RESOURCE[kind];
-      const snapshot = data;
-      const id = editingId ?? item.id ?? uniqueId(kind.slice(0, 3));
-      const optimistic = { ...item, id };
-
-      if (kind === "transfer" && !editingId) {
-        const transfer = optimistic as Transfer;
-        setData((current) => ({
-          ...current,
-          transfers: [transfer, ...current.transfers],
-          accounts: current.accounts.map((account) => {
-            if (transfer.status !== "completed") return account;
-            if (account.id === transfer.fromAccountId) {
-              return { ...account, balance: account.balance - transfer.amount };
-            }
-            if (account.id === transfer.toAccountId) {
-              return { ...account, balance: account.balance + transfer.amount };
-            }
-            return account;
-          }),
-        }));
-      } else {
-        const listKey = RESOURCE_LIST[kind];
-        setData((current) => {
-          const list = current[listKey] as any[];
-          const nextList = editingId
-            ? list.map((existing) => (existing.id === editingId ? optimistic : existing))
-            : [optimistic, ...list];
-          return { ...current, [listKey]: nextList };
-        });
-      }
-
       setEditor(null);
       setIsSyncing(true);
       try {
@@ -525,7 +507,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
           {
             method: editingId ? "PATCH" : "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payloadForApi(kind, { ...item, id })),
+            body: JSON.stringify(payloadForApi(kind, { ...item })),
           },
         );
         if (!response.ok) {
@@ -543,7 +525,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
           tone: refreshed ? "success" : "info",
         });
       } catch (error) {
-        setData(snapshot);
         setToast({
           title: "Change not saved",
           detail: error instanceof Error ? error.message : "Please try again.",
@@ -553,18 +534,12 @@ export default function CashflowApp({ userName }: { userName: string }) {
         setIsSyncing(false);
       }
     },
-    [data, loadData],
+    [loadData],
   );
 
   const deleteResource = useCallback(async () => {
     if (!confirm) return;
     const { kind, id, label } = confirm;
-    const snapshot = data;
-    const listKey = RESOURCE_LIST[kind];
-    setData((current) => ({
-      ...current,
-      [listKey]: (current[listKey] as any[]).filter((item) => item.id !== id),
-    }));
     setConfirm(null);
     setIsSyncing(true);
     try {
@@ -586,7 +561,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
         tone: refreshed ? "success" : "info",
       });
     } catch (error) {
-      setData(snapshot);
       setToast({
         title: "Delete failed",
         detail: error instanceof Error ? error.message : "Please try again.",
@@ -595,17 +569,10 @@ export default function CashflowApp({ userName }: { userName: string }) {
     } finally {
       setIsSyncing(false);
     }
-  }, [confirm, data, loadData]);
+  }, [confirm, loadData]);
 
   const markBillPaid = useCallback(
     async (bill: Bill) => {
-      const snapshot = data;
-      setData((current) => ({
-        ...current,
-        bills: current.bills.map((item) =>
-          item.id === bill.id ? { ...item, status: "paid" } : item,
-        ),
-      }));
       setIsSyncing(true);
       try {
         const response = await fetch(`/api/finance/bills/${bill.id}/pay`, {
@@ -621,7 +588,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
           tone: refreshed ? "success" : "info",
         });
       } catch (error) {
-        setData(snapshot);
         setToast({
           title: "Payment update failed",
           detail: error instanceof Error ? error.message : "Please try again.",
@@ -631,11 +597,20 @@ export default function CashflowApp({ userName }: { userName: string }) {
         setIsSyncing(false);
       }
     },
-    [data, loadData],
+    [loadData],
   );
 
   const duplicateResource = (kind: Exclude<ResourceKind, "transfer">, id: string) =>
     setEditor({ kind, mode: "duplicate", id });
+
+  const savePreferences = useCallback(() => {
+    setSettingsOpen(false);
+    setToast({
+      title: "Preferences saved",
+      detail: "Your appearance preference is saved on this device.",
+      tone: "success",
+    });
+  }, []);
 
   const activeLabel = NAV_ITEMS.find((item) => item.id === active)?.label ?? "Overview";
   const overdueCount = data.bills.filter((bill) => bill.status === "overdue").length;
@@ -759,19 +734,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
               }
               onDuplicate={(id) => duplicateResource("transaction", id)}
               onBulkDelete={async (ids) => {
-                const snapshot = data;
-                setData((current) => ({
-                  ...current,
-                  transactions: current.transactions.filter((item) => !ids.includes(item.id)),
-                }));
                 const response = await fetch("/api/finance/transactions/bulk", {
                   method: "DELETE",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ ids }),
                 });
                 if (!response.ok) {
-                  setData(snapshot);
-                  setToast({ title: "Bulk delete failed", detail: "Your records were restored.", tone: "danger" });
+                  setToast({ title: "Bulk delete failed", detail: "No records were removed from the dashboard.", tone: "danger" });
                   return;
                 }
                 const refreshed = await loadData(true);
@@ -923,6 +892,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
           theme={theme}
           onTheme={setTheme}
           onClose={() => setSettingsOpen(false)}
+          onSavePreferences={savePreferences}
         />
       ) : null}
       {toast ? <ToastMessage toast={toast} onClose={() => setToast(null)} /> : null}
@@ -2582,11 +2552,13 @@ function SettingsPanel({
   theme,
   onTheme,
   onClose,
+  onSavePreferences,
 }: {
   userName: string;
   theme: "light" | "dark";
   onTheme: (theme: "light" | "dark") => void;
   onClose: () => void;
+  onSavePreferences: () => void;
 }) {
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -2609,7 +2581,7 @@ function SettingsPanel({
           </FormSection>
           <div className="security-settings"><span>⌾</span><div><strong>Private deployment protection</strong><p>Access is restricted to your account. Financial records are isolated by owner and encrypted in transit.</p></div></div>
         </div>
-        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={onClose}>Save preferences</button></div>
+        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={onSavePreferences}>Save preferences</button></div>
       </aside>
     </div>
   );
