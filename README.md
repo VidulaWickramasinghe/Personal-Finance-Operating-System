@@ -30,6 +30,10 @@ pnpm run lint
 pnpm run build
 ```
 
+`pnpm run dev` applies all pending D1 migrations to the project-local database
+before starting vinext, so a fresh checkout can use the finance API immediately.
+To apply them without starting the app, run `pnpm run dev:prepare`.
+
 Generate a new D1 migration after changing `db/schema.ts`:
 
 ```bash
@@ -41,3 +45,8 @@ the authenticated workspace identity headers supplied by OpenAI Sites; local
 development uses a dedicated local identity. Financial records are stored in
 D1, receipts are stored in R2, and no demo accounts, transactions, budgets,
 goals, bills, or balances are inserted.
+
+The production command intentionally uses Vite/vinext rather than `next build`.
+That build emits the Cloudflare Worker and packages `.openai/hosting.json` plus
+the D1 migrations under `dist/.openai`, allowing Sites to provision the `DB`
+and `RECEIPTS` bindings and apply the database schema during deployment.
