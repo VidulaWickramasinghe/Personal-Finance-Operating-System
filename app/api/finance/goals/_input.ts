@@ -61,6 +61,17 @@ function deadline(value: unknown) {
   return value;
 }
 
+function color(value: unknown, fallback?: string) {
+  if (value === undefined && fallback !== undefined) return fallback;
+  if (
+    typeof value !== "string" ||
+    !/^#[0-9a-f]{6}$/i.test(value.trim())
+  ) {
+    throw new ApiInputError("color must be a six-digit hexadecimal colour.");
+  }
+  return value.trim().toUpperCase();
+}
+
 export function goalCreateInput(payload: Record<string, unknown>) {
   return {
     name: text(payload, "name", { required: true }),
@@ -81,6 +92,7 @@ export function goalCreateInput(payload: Record<string, unknown>) {
       { fallback: 0 },
     ),
     notes: text(payload, "notes"),
+    color: color(payload.color, "#6556E8"),
     status: enumValue(
       payload.status,
       GOAL_STATUSES,
@@ -120,6 +132,9 @@ export function goalPatchInput(payload: Record<string, unknown>) {
   }
   if (has(payload, "notes")) {
     result.notes = text(payload, "notes");
+  }
+  if (has(payload, "color")) {
+    result.color = color(payload.color);
   }
   if (has(payload, "status")) {
     result.status = enumValue(payload.status, GOAL_STATUSES, "status");

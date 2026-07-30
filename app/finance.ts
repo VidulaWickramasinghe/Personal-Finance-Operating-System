@@ -1,7 +1,63 @@
 import type { Budget, FinanceData, Transaction } from "./types";
 
-export const TODAY = "2026-07-26";
-export const CURRENT_MONTH = "2026-07";
+function pad(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+export function localDate(value = new Date()) {
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+}
+
+export function currentMonthKey(value = new Date()) {
+  return localDate(value).slice(0, 7);
+}
+
+export function currentMonthStart(value = new Date()) {
+  return `${currentMonthKey(value)}-01`;
+}
+
+export function currentYearStart(value = new Date()) {
+  return `${value.getFullYear()}-01-01`;
+}
+
+export function currentQuarterStart(value = new Date()) {
+  const quarterStartMonth = Math.floor(value.getMonth() / 3) * 3;
+  return `${value.getFullYear()}-${pad(quarterStartMonth + 1)}-01`;
+}
+
+export function currentWeekStart(value = new Date()) {
+  const start = new Date(value);
+  const day = start.getDay();
+  start.setDate(start.getDate() - (day === 0 ? 6 : day - 1));
+  return localDate(start);
+}
+
+export function monthLabel(value = new Date()) {
+  return new Intl.DateTimeFormat("en-AU", {
+    month: "long",
+    year: "numeric",
+  }).format(value);
+}
+
+export function headingDate(value = new Date()) {
+  return new Intl.DateTimeFormat("en-AU", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(value);
+}
+
+export function reportDate(value = new Date()) {
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(value);
+}
+
+export function daysInCurrentMonth(value = new Date()) {
+  return new Date(value.getFullYear(), value.getMonth() + 1, 0).getDate();
+}
 
 export function currency(value: number, code = "AUD", compact = false) {
   return new Intl.NumberFormat("en-AU", {
@@ -28,10 +84,11 @@ export function longDate(value: string) {
 }
 
 export function completedMonthTransactions(data: FinanceData) {
+  const month = currentMonthKey();
   return data.transactions.filter(
     (transaction) =>
       transaction.status === "completed" &&
-      transaction.date.startsWith(CURRENT_MONTH),
+      transaction.date.startsWith(month),
   );
 }
 

@@ -16,7 +16,7 @@ function has(payload: Record<string, unknown>, key: string) {
 function text(
   payload: Record<string, unknown>,
   key: string,
-  options: { required?: boolean; fallback?: string } = {},
+  options: { required?: boolean; fallback?: string; maxLength?: number } = {},
 ) {
   const value = payload[key];
   if (value === undefined && !options.required) return options.fallback ?? "";
@@ -26,6 +26,11 @@ function text(
   const trimmed = value.trim();
   if (options.required && !trimmed) {
     throw new ApiInputError(`${key} is required.`);
+  }
+  if (options.maxLength && trimmed.length > options.maxLength) {
+    throw new ApiInputError(
+      `${key} must be ${options.maxLength} characters or fewer.`,
+    );
   }
   return trimmed;
 }
@@ -78,6 +83,7 @@ export function accountCreateInput(
       "purpose",
       "custom",
     ),
+    rule: text(payload, "rule", { maxLength: 240 }),
     openingBalanceCents,
     currentBalanceCents: cents(
       payload.currentBalanceCents,
@@ -110,6 +116,9 @@ export function accountPatchInput(payload: Record<string, unknown>) {
       ACCOUNT_PURPOSES,
       "purpose",
     );
+  }
+  if (has(payload, "rule")) {
+    result.rule = text(payload, "rule", { maxLength: 240 });
   }
   if (has(payload, "openingBalanceCents")) {
     result.openingBalanceCents = cents(

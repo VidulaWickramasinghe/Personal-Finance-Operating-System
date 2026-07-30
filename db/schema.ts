@@ -18,6 +18,7 @@ export const users = sqliteTable(
     displayName: text("display_name"),
     defaultCurrency: text("default_currency").notNull().default("AUD"),
     seededAt: text("seeded_at"),
+    workspaceVersion: integer("workspace_version").notNull().default(0),
     createdAt: text("created_at").notNull().default(now),
     updatedAt: text("updated_at").notNull().default(now),
   },
@@ -41,6 +42,7 @@ export const accounts = sqliteTable(
     bankName: text("bank_name").notNull().default(""),
     accountType: text("account_type").notNull().default("checking"),
     purpose: text("purpose").notNull().default("custom"),
+    rule: text("rule").notNull().default(""),
     openingBalanceCents: integer("opening_balance_cents").notNull().default(0),
     currentBalanceCents: integer("current_balance_cents").notNull().default(0),
     currency: text("currency").notNull().default("AUD"),
@@ -242,6 +244,7 @@ export const goals = sqliteTable(
       .notNull()
       .default(0),
     notes: text("notes").notNull().default(""),
+    color: text("color").notNull().default("#6556E8"),
     status: text("status").notNull().default("active"),
     createdAt: text("created_at").notNull().default(now),
     updatedAt: text("updated_at").notNull().default(now),

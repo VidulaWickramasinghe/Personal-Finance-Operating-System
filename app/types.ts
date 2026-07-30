@@ -64,10 +64,11 @@ export type Budget = {
   id: string;
   name: string;
   categoryId: string;
+  accountId?: string | null;
   monthlyLimit: number;
   weeklyLimit: number;
   dailyLimit: number;
-  periodStart: string;
+  resetDay: number;
   status: "active" | "paused";
 };
 
@@ -80,6 +81,7 @@ export type Goal = {
   monthlyContribution: number;
   notes: string;
   color: string;
+  status?: "active" | "completed" | "paused" | "archived";
 };
 
 export type Bill = {
@@ -93,6 +95,7 @@ export type Bill = {
   frequency: "once" | "weekly" | "fortnightly" | "monthly" | "quarterly" | "yearly";
   status: BillStatus;
   autopay: boolean;
+  notes?: string;
 };
 
 export type Activity = {
