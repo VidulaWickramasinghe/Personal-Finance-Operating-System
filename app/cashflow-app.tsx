@@ -910,7 +910,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
           onTheme={setTheme}
           onSave={savePreferences}
           onClose={() => setSettingsOpen(false)}
-          onSave={savePreferences}
+          onSavePreferences={savePreferences}
         />
       ) : null}
       {toast ? <ToastMessage toast={toast} onClose={() => setToast(null)} /> : null}
@@ -2616,7 +2616,7 @@ function SettingsPanel({
   onTheme,
   onSave,
   onClose,
-  onSave,
+  onSavePreferences,
 }: {
   userName: string;
   preferences: FinancePreferences;
@@ -2624,7 +2624,7 @@ function SettingsPanel({
   onTheme: (theme: "light" | "dark") => void;
   onSave: (preferences: FinancePreferences) => Promise<boolean>;
   onClose: () => void;
-  onSave: () => void;
+  onSavePreferences: () => void;
 }) {
   const [draft, setDraft] = useState(preferences);
   const [saving, setSaving] = useState(false);
@@ -2660,7 +2660,7 @@ function SettingsPanel({
           </FormSection>
           <div className="security-settings"><span>⌾</span><div><strong>Private deployment protection</strong><p>Access is restricted to your account. Financial records are isolated by owner and encrypted in transit.</p></div></div>
         </div>
-        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={onSave}>Save preferences</button></div>
+        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={onSavePreferences}>Save preferences</button></div>
       </aside>
     </div>
   );

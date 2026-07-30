@@ -71,8 +71,10 @@ test("settings save handler is defined and wired into the preferences panel", as
   );
 
   assert.match(app, /const savePreferences = useCallback\(\(\) =>/);
-  assert.match(app, /onSave=\{savePreferences\}/);
-  assert.match(app, /onClick=\{onSave\}>Save preferences/);
+  assert.match(app, /onSavePreferences=\{savePreferences\}/);
+  assert.match(app, /onClick=\{onSavePreferences\}>Save preferences/);
+  assert.match(app, /function SettingsPanel\(\{[\s\S]*?onSavePreferences,[\s\S]*?\}: \{/);
+  assert.doesNotMatch(app, /onSavePreferences,\s*onSavePreferences,/);
 });
 
 test("workspace initialization removes demo finance rows and keeps only required catalogue data", async () => {
