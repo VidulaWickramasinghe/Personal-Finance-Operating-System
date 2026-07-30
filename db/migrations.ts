@@ -1,113 +1,49 @@
-import initialMigration from "../drizzle/0000_short_loki.sql?raw";
-import workspaceMigration from "../drizzle/0001_broad_big_bertha.sql?raw";
-import preferencesMigration from "../drizzle/0002_wonderful_meggan.sql?raw";
+import initialSchema from "../drizzle/0000_short_loki.sql?raw";
+import workspaceUpgrade from "../drizzle/0001_broad_big_bertha.sql?raw";
 import { getD1Binding } from ".";
 
-const MIGRATION_TABLE = "__cashflow_migrations";
-const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
-const ALTER_COLUMN_PATTERN =
-  /^ALTER TABLE\s+[`"]?([A-Za-z0-9_]+)[`"]?\s+ADD\s+[`"]?([A-Za-z0-9_]+)[`"]?/i;
+let initialization: Promise<void> | undefined;
 
-const migrations = [
-  { name: "0000_short_loki", sql: initialMigration },
-  { name: "0001_broad_big_bertha", sql: workspaceMigration },
-  { name: "0002_wonderful_meggan", sql: preferencesMigration },
-] as const;
-
-let financeSchemaReady: Promise<void> | null = null;
-
-export function ensureFinanceSchema() {
-  financeSchemaReady ??= applyFinanceMigrations().catch((error) => {
-    financeSchemaReady = null;
+/**
+ * Makes the finance API self-initializing when vinext is started directly.
+ * Sites still applies the packaged migrations during deployment, but local
+ * previews must not depend on a separate shell command having run first.
+ */
+export function ensureFinanceStorage() {
+  initialization ??= initializeFinanceStorage().catch((error) => {
+    // A failed initialization must be retryable after a transient D1 error.
+    initialization = undefined;
     throw error;
   });
-  return financeSchemaReady;
+  return initialization;
 }
 
-async function applyFinanceMigrations() {
+async function initializeFinanceStorage() {
   const d1 = getD1Binding();
-
-  await d1
+  const usersTable = await d1
     .prepare(
-      `CREATE TABLE IF NOT EXISTS ${MIGRATION_TABLE} (
-         name TEXT PRIMARY KEY NOT NULL,
-         applied_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL
-       )`,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'",
     )
-    .run();
+    .first<{ name: string }>();
 
-  const appliedRows = await d1
-    .prepare(`SELECT name FROM ${MIGRATION_TABLE}`)
-    .all<{ name: string }>();
-  const applied = new Set(appliedRows.results.map((row) => row.name));
+  if (!usersTable) {
+    await executeMigration(d1, initialSchema);
+  }
 
-  for (const migration of migrations) {
-    if (applied.has(migration.name)) continue;
-
-    for (const sourceStatement of splitStatements(migration.sql)) {
-      const alterColumn = sourceStatement.match(ALTER_COLUMN_PATTERN);
-      if (
-        alterColumn &&
-        (await columnExists(d1, alterColumn[1], alterColumn[2]))
-      ) {
-        continue;
-      }
-
-      const statement = makeCreateStatementIdempotent(sourceStatement);
-      try {
-        await d1.prepare(statement).run();
-      } catch (error) {
-        if (!alterColumn || !isDuplicateColumnError(error)) {
-          throw error;
-        }
-      }
-    }
-
-    await d1
-      .prepare(
-        `INSERT OR IGNORE INTO ${MIGRATION_TABLE} (name) VALUES (?)`,
-      )
-      .bind(migration.name)
-      .run();
+  const columns = await d1.prepare("PRAGMA table_info(users)").all<{
+    name: string;
+  }>();
+  const names = new Set(columns.results.map((column) => column.name));
+  if (!names.has("workspace_version")) {
+    await executeMigration(d1, workspaceUpgrade);
   }
 }
 
-function splitStatements(sql: string) {
-  return sql
-    .split(STATEMENT_BREAKPOINT)
+function executeMigration(d1: D1Database, migration: string) {
+  const statements = migration
+    .split("--> statement-breakpoint")
     .map((statement) => statement.trim())
-    .filter(Boolean);
-}
-
-function makeCreateStatementIdempotent(statement: string) {
-  return statement
-    .replace(
-      /^CREATE TABLE\s+(?!IF NOT EXISTS)/i,
-      "CREATE TABLE IF NOT EXISTS ",
-    )
-    .replace(
-      /^CREATE UNIQUE INDEX\s+(?!IF NOT EXISTS)/i,
-      "CREATE UNIQUE INDEX IF NOT EXISTS ",
-    )
-    .replace(
-      /^CREATE INDEX\s+(?!IF NOT EXISTS)/i,
-      "CREATE INDEX IF NOT EXISTS ",
-    );
-}
-
-async function columnExists(
-  d1: D1Database,
-  tableName: string,
-  columnName: string,
-) {
-  const safeTableName = tableName.replaceAll('"', '""');
-  const result = await d1
-    .prepare(`PRAGMA table_info("${safeTableName}")`)
-    .all<{ name: string }>();
-  return result.results.some((column) => column.name === columnName);
-}
-
-function isDuplicateColumnError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.toLowerCase().includes("duplicate column name");
+    .filter(Boolean)
+    .map((statement) => d1.prepare(statement));
+  return d1.batch(statements);
 }

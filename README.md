@@ -33,8 +33,10 @@ pnpm run build
 ```
 
 `pnpm run dev` applies all pending D1 migrations to the project-local database
-before starting Vite/vinext, so a fresh checkout can use the finance API immediately.
+before starting vinext, so a fresh checkout can use the finance API immediately.
 To apply them without starting the app, run `pnpm run dev:prepare`.
+The API also verifies and initializes its schema at runtime, so starting vinext
+directly does not leave `/api/finance` returning a storage `503`.
 
 Generate a new D1 migration after changing `db/schema.ts`:
 

@@ -506,6 +506,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
   const saveResource = useCallback(
     async (kind: ResourceKind, item: any, editingId?: string) => {
       const resource = API_RESOURCE[kind];
+      setEditor(null);
       setIsSyncing(true);
       try {
         const response = await fetch(
@@ -600,47 +601,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
           detail: error instanceof Error ? error.message : "Please try again.",
           tone: "danger",
         });
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [loadData],
-  );
-
-  const savePreferences = useCallback(
-    async (preferences: FinancePreferences) => {
-      setIsSyncing(true);
-      try {
-        const response = await fetch("/api/finance/preferences", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(preferences),
-        });
-        if (!response.ok) {
-          const failure = await response
-            .json()
-            .catch(() => null) as { error?: string } | null;
-          throw new Error(
-            failure?.error ?? "Unable to save workspace preferences.",
-          );
-        }
-        const refreshed = await loadData(true);
-        setSettingsOpen(false);
-        setToast({
-          title: "Preferences saved",
-          detail: refreshed
-            ? "Regional and notification settings are synced to your workspace."
-            : "Preferences were saved. Retry the refresh to load them here.",
-          tone: refreshed ? "success" : "info",
-        });
-        return true;
-      } catch (error) {
-        setToast({
-          title: "Preferences not saved",
-          detail: error instanceof Error ? error.message : "Please try again.",
-          tone: "danger",
-        });
-        return false;
       } finally {
         setIsSyncing(false);
       }

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { getD1Binding, getDb } from ".";
-import { ensureFinanceSchema } from "./migrations";
+import { ensureFinanceStorage } from "./migrations";
 import {
   accounts,
   activity,
@@ -129,11 +129,7 @@ export async function getFinanceUser(request: Request): Promise<FinanceUser> {
   const identity = identityFromRequest(request);
   if (!identity) throw new FinanceAuthError();
 
-  // Sites normally applies packaged D1 migrations during deployment. This
-  // idempotent guard also repairs an empty or partially migrated database
-  // before any user record is read, without replacing existing finance data.
-  await ensureFinanceSchema();
-
+  await ensureFinanceStorage();
   const db = getDb();
   await db
     .insert(users)
