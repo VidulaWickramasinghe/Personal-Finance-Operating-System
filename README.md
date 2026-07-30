@@ -30,6 +30,10 @@ pnpm run lint
 pnpm run build
 ```
 
+`pnpm run dev` applies all pending D1 migrations to the project-local database
+before starting vinext, so a fresh checkout can use the finance API immediately.
+To apply them without starting the app, run `pnpm run dev:prepare`.
+
 Generate a new D1 migration after changing `db/schema.ts`:
 
 ```bash

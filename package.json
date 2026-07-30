@@ -6,7 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "dev": "pnpm run dev:prepare && WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "dev:prepare": "wrangler d1 migrations apply DB --local --config wrangler.jsonc",
     "build": "vite build",
     "start": "vite preview",
     "test": "pnpm run build && node --test tests/*.test.mjs",
