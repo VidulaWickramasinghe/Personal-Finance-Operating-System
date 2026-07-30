@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { getDb } from ".";
+import { getD1Binding, getDb } from ".";
 import {
   accounts,
   activity,
@@ -16,6 +16,101 @@ const EMAIL_HEADER = "oai-authenticated-user-email";
 const NAME_HEADER = "oai-authenticated-user-full-name";
 const NAME_ENCODING_HEADER = "oai-authenticated-user-full-name-encoding";
 
+export const CURRENT_WORKSPACE_VERSION = 1;
+
+type SystemCategory = {
+  slug: string;
+  name: string;
+  type: "income" | "expense";
+  color: string;
+  icon: string;
+};
+
+const SYSTEM_CATEGORIES = [
+  { slug: "salary", name: "Salary", type: "income", color: "#34C88A", icon: "briefcase" },
+  { slug: "bonus", name: "Bonus", type: "income", color: "#46B989", icon: "badge-dollar-sign" },
+  { slug: "freelance", name: "Freelance", type: "income", color: "#4C9AFF", icon: "sparkles" },
+  { slug: "business-income", name: "Business Income", type: "income", color: "#3AA7A3", icon: "building-2" },
+  { slug: "investment-income", name: "Investment Income", type: "income", color: "#8D80F8", icon: "chart-no-axes-combined" },
+  { slug: "interest", name: "Interest", type: "income", color: "#6C8CFF", icon: "percent" },
+  { slug: "dividends", name: "Dividends", type: "income", color: "#9B78E5", icon: "landmark" },
+  { slug: "rental-income", name: "Rental Income", type: "income", color: "#5B9CF6", icon: "house" },
+  { slug: "refunds", name: "Refunds", type: "income", color: "#47B8B0", icon: "rotate-ccw" },
+  { slug: "cash-deposits", name: "Cash Deposits", type: "income", color: "#58B87C", icon: "banknote" },
+  { slug: "gifts-income", name: "Gifts Received", type: "income", color: "#D170E8", icon: "gift" },
+  { slug: "government-payments", name: "Government Payments", type: "income", color: "#7696D8", icon: "landmark" },
+  { slug: "other-income", name: "Other Income", type: "income", color: "#7D8799", icon: "circle-plus" },
+  { slug: "groceries", name: "Groceries", type: "expense", color: "#FFB155", icon: "shopping-basket" },
+  { slug: "food", name: "Food", type: "expense", color: "#F4A261", icon: "sandwich" },
+  { slug: "dining", name: "Dining", type: "expense", color: "#F98E77", icon: "utensils" },
+  { slug: "coffee", name: "Coffee", type: "expense", color: "#B8835A", icon: "coffee" },
+  { slug: "fuel", name: "Fuel", type: "expense", color: "#E89A45", icon: "fuel" },
+  { slug: "housing", name: "Housing", type: "expense", color: "#8D80F8", icon: "house" },
+  { slug: "rent", name: "Rent", type: "expense", color: "#8378E3", icon: "key-round" },
+  { slug: "mortgage", name: "Mortgage", type: "expense", color: "#756BD2", icon: "house-plus" },
+  { slug: "phone", name: "Phone", type: "expense", color: "#5F9BFF", icon: "smartphone" },
+  { slug: "internet", name: "Internet", type: "expense", color: "#4C9AFF", icon: "wifi" },
+  { slug: "electricity", name: "Electricity", type: "expense", color: "#F0B94C", icon: "zap" },
+  { slug: "water", name: "Water", type: "expense", color: "#5BA9E8", icon: "droplets" },
+  { slug: "gas", name: "Gas", type: "expense", color: "#E5865E", icon: "flame" },
+  { slug: "utilities", name: "Utilities", type: "expense", color: "#47B8B0", icon: "plug-zap" },
+  { slug: "insurance", name: "Insurance", type: "expense", color: "#7589D8", icon: "shield-check" },
+  { slug: "health", name: "Health", type: "expense", color: "#5BC1A7", icon: "heart-pulse" },
+  { slug: "medical", name: "Medical", type: "expense", color: "#4DB59C", icon: "stethoscope" },
+  { slug: "entertainment", name: "Entertainment", type: "expense", color: "#FF8E64", icon: "film" },
+  { slug: "shopping", name: "Shopping", type: "expense", color: "#EC72A4", icon: "shopping-bag" },
+  { slug: "transport", name: "Transport", type: "expense", color: "#6C8CFF", icon: "car" },
+  { slug: "travel", name: "Travel", type: "expense", color: "#5F9BFF", icon: "plane" },
+  { slug: "subscriptions", name: "Subscriptions", type: "expense", color: "#D170E8", icon: "repeat" },
+  { slug: "loan", name: "Loan", type: "expense", color: "#D4866A", icon: "hand-coins" },
+  { slug: "education", name: "Education", type: "expense", color: "#D09A48", icon: "graduation-cap" },
+  { slug: "investment", name: "Investment", type: "expense", color: "#7E7BE5", icon: "chart-line" },
+  { slug: "childcare", name: "Childcare", type: "expense", color: "#E887B2", icon: "baby" },
+  { slug: "pets", name: "Pets", type: "expense", color: "#B7835B", icon: "paw-print" },
+  { slug: "personal-care", name: "Personal Care", type: "expense", color: "#D47FA8", icon: "sparkles" },
+  { slug: "taxes", name: "Taxes", type: "expense", color: "#7C879A", icon: "receipt" },
+  { slug: "fees", name: "Fees & Charges", type: "expense", color: "#9399A6", icon: "circle-dollar-sign" },
+  { slug: "charity", name: "Charity", type: "expense", color: "#E16F85", icon: "heart-handshake" },
+  { slug: "gifts", name: "Gifts", type: "expense", color: "#C77BDE", icon: "gift" },
+  { slug: "home-maintenance", name: "Home Maintenance", type: "expense", color: "#A78B6F", icon: "hammer" },
+  { slug: "other", name: "Other", type: "expense", color: "#8C92A4", icon: "circle" },
+] satisfies readonly SystemCategory[];
+
+const LEGACY_DEMO_ROWS = {
+  transactions: [
+    "salary",
+    "rent",
+    "phone",
+    "groceries",
+    "coffee",
+    "fuel",
+    "cinema",
+    "chatgpt",
+  ],
+  transfers: ["salary-bills", "salary-daily", "salary-savings"],
+  budgets: ["groceries", "dining", "transport", "entertainment"],
+  goals: ["emergency", "holiday"],
+  bills: ["rent", "electricity", "internet", "chatgpt"],
+  activity: ["welcome"],
+  accounts: ["salary", "daily", "bills", "international", "savings"],
+} as const;
+
+type LegacyTable =
+  | "transactions"
+  | "transfers"
+  | "budgets"
+  | "goals"
+  | "bills"
+  | "activity";
+
+type LegacyKind =
+  | "transaction"
+  | "transfer"
+  | "budget"
+  | "goal"
+  | "bill"
+  | "activity";
+
 export type FinanceUser = typeof users.$inferSelect;
 
 export class FinanceAuthError extends Error {
@@ -25,10 +120,7 @@ export class FinanceAuthError extends Error {
   }
 }
 
-export async function getFinanceUser(
-  request: Request,
-  options: { seed?: boolean } = {},
-): Promise<FinanceUser> {
+export async function getFinanceUser(request: Request): Promise<FinanceUser> {
   const identity = identityFromRequest(request);
   if (!identity) throw new FinanceAuthError();
 
@@ -55,425 +147,208 @@ export async function getFinanceUser(
     .limit(1);
 
   if (!user) throw new Error("Unable to create or load the finance profile.");
-
-  if (options.seed !== false && !user.seededAt) {
-    await seedFinanceUser(user);
-    const [seededUser] = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, user.id))
-      .limit(1);
-    return seededUser ?? user;
-  }
-
-  return user;
+  return initializeFinanceWorkspace(user);
 }
 
-export async function seedFinanceUser(user: FinanceUser): Promise<void> {
-  const db = getDb();
-  const today = new Date();
-  const date = (dayOffset: number, hour = 9) => {
-    const value = new Date(today);
-    value.setUTCDate(value.getUTCDate() + dayOffset);
-    value.setUTCHours(hour, 0, 0, 0);
-    return value.toISOString();
-  };
-  const dateOnly = (dayOffset: number) => date(dayOffset).slice(0, 10);
-  const id = (kind: string, slug: string) => `${user.id}:${kind}:${slug}`;
+export async function initializeFinanceWorkspace(
+  user: FinanceUser,
+): Promise<FinanceUser> {
+  if (user.workspaceVersion >= CURRENT_WORKSPACE_VERSION) return user;
 
-  const categoryRows: Array<typeof categories.$inferInsert> = [
-    ["salary", "Salary", "income", "#34C88A", "briefcase"],
-    ["freelance", "Freelance", "income", "#4C9AFF", "sparkles"],
-    ["groceries", "Groceries", "expense", "#FFB155", "shopping-basket"],
-    ["dining", "Dining", "expense", "#F98E77", "utensils"],
-    ["transport", "Transport", "expense", "#6C8CFF", "car"],
-    ["housing", "Housing", "expense", "#8D80F8", "house"],
-    ["utilities", "Utilities", "expense", "#47B8B0", "zap"],
-    ["subscriptions", "Subscriptions", "expense", "#D170E8", "repeat"],
-    ["shopping", "Shopping", "expense", "#EC72A4", "shopping-bag"],
-    ["entertainment", "Entertainment", "expense", "#FF8E64", "film"],
-    ["health", "Health", "expense", "#5BC1A7", "heart-pulse"],
-    ["travel", "Travel", "expense", "#5F9BFF", "plane"],
-    ["education", "Education", "expense", "#D09A48", "graduation-cap"],
-    ["other", "Other", "expense", "#8C92A4", "circle"],
-  ].map(([slug, name, type, color, icon]) => ({
-    id: id("category", slug),
-    userId: user.id,
-    name,
-    type,
-    color,
-    icon,
-    isSystem: true,
-  }));
-
-  const accountRows: Array<typeof accounts.$inferInsert> = [
-    {
-      id: id("account", "salary"),
-      userId: user.id,
-      name: "Account A · Salary",
-      bankName: "Northstar Bank",
-      accountType: "checking",
-      purpose: "salary",
-      openingBalanceCents: 0,
-      currentBalanceCents: 100000,
-      currency: user.defaultCurrency,
-      color: "#7A6BEF",
-      icon: "landmark",
-      notes: "Income only. Distribute funds from here.",
-    },
-    {
-      id: id("account", "daily"),
-      userId: user.id,
-      name: "Account B · Daily",
-      bankName: "Northstar Bank",
-      accountType: "checking",
-      purpose: "daily",
-      openingBalanceCents: 0,
-      currentBalanceCents: 93430,
-      currency: user.defaultCurrency,
-      color: "#FF9E6D",
-      icon: "wallet-cards",
-      notes: "Everyday spending only.",
-    },
-    {
-      id: id("account", "bills"),
-      userId: user.id,
-      name: "Account B+ · Bills",
-      bankName: "Northstar Bank",
-      accountType: "checking",
-      purpose: "bills",
-      openingBalanceCents: 0,
-      currentBalanceCents: 28100,
-      currency: user.defaultCurrency,
-      color: "#42B6A4",
-      icon: "receipt-text",
-      notes: "Reserved for recurring household bills.",
-    },
-    {
-      id: id("account", "international"),
-      userId: user.id,
-      name: "Account C · International",
-      bankName: "Atlas Money",
-      accountType: "checking",
-      purpose: "international",
-      openingBalanceCents: 20000,
-      currentBalanceCents: 16701,
-      currency: user.defaultCurrency,
-      color: "#5B9CF6",
-      icon: "globe-2",
-      notes: "Subscriptions and international payments.",
-    },
-    {
-      id: id("account", "savings"),
-      userId: user.id,
-      name: "Account D · Long-Term Savings",
-      bankName: "Northstar Bank",
-      accountType: "savings",
-      purpose: "savings",
-      openingBalanceCents: 840000,
-      currentBalanceCents: 900000,
-      currency: user.defaultCurrency,
-      color: "#B77AE7",
-      icon: "piggy-bank",
-      notes: "Emergency fund and long-term goals.",
-    },
+  const d1 = getD1Binding();
+  const statements: D1PreparedStatement[] = [
+    prepareLegacyDelete(
+      d1,
+      user.id,
+      "bills",
+      "bill",
+      LEGACY_DEMO_ROWS.bills,
+    ),
+    prepareLegacyDelete(
+      d1,
+      user.id,
+      "budgets",
+      "budget",
+      LEGACY_DEMO_ROWS.budgets,
+    ),
+    prepareLegacyDelete(
+      d1,
+      user.id,
+      "transfers",
+      "transfer",
+      LEGACY_DEMO_ROWS.transfers,
+    ),
+    prepareLegacyDelete(
+      d1,
+      user.id,
+      "transactions",
+      "transaction",
+      LEGACY_DEMO_ROWS.transactions,
+    ),
+    prepareLegacyDelete(
+      d1,
+      user.id,
+      "goals",
+      "goal",
+      LEGACY_DEMO_ROWS.goals,
+    ),
+    prepareLegacyDelete(
+      d1,
+      user.id,
+      "activity",
+      "activity",
+      LEGACY_DEMO_ROWS.activity,
+    ),
+    ...LEGACY_DEMO_ROWS.accounts.map((slug) =>
+      prepareLegacyAccountDelete(d1, user.id, slug),
+    ),
+    ...SYSTEM_CATEGORIES.map((category) =>
+      prepareSystemCategoryInsert(d1, user.id, category, true),
+    ),
+    d1
+      .prepare(
+        `UPDATE users
+         SET workspace_version = ?, seeded_at = NULL,
+             updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         WHERE id = ? AND workspace_version < ?`,
+      )
+      .bind(
+        CURRENT_WORKSPACE_VERSION,
+        user.id,
+        CURRENT_WORKSPACE_VERSION,
+      ),
   ];
 
-  const transactionRows: Array<typeof transactions.$inferInsert> = [
-    {
-      id: id("transaction", "salary"),
-      userId: user.id,
-      accountId: id("account", "salary"),
-      categoryId: id("category", "salary"),
-      title: "Monthly salary",
-      description: "Regular salary deposit",
-      amountCents: 500000,
-      type: "income",
-      occurredAt: date(-14, 8),
-      merchant: "Acme Studio",
-      paymentMethod: "bank-transfer",
-      tagsJson: '["salary","recurring"]',
-      isRecurring: true,
-      status: "completed",
-    },
-    {
-      id: id("transaction", "rent"),
-      userId: user.id,
-      accountId: id("account", "bills"),
-      categoryId: id("category", "housing"),
-      title: "Apartment rent",
-      amountCents: 185000,
-      type: "expense",
-      occurredAt: date(-12, 9),
-      merchant: "Parkside Property",
-      paymentMethod: "direct-debit",
-      isRecurring: true,
-      status: "completed",
-    },
-    {
-      id: id("transaction", "phone"),
-      userId: user.id,
-      accountId: id("account", "bills"),
-      categoryId: id("category", "utilities"),
-      title: "Mobile plan",
-      amountCents: 6900,
-      type: "expense",
-      occurredAt: date(-8, 10),
-      merchant: "Orbit Mobile",
-      paymentMethod: "direct-debit",
-      isRecurring: true,
-      status: "completed",
-    },
-    {
-      id: id("transaction", "groceries"),
-      userId: user.id,
-      accountId: id("account", "daily"),
-      categoryId: id("category", "groceries"),
-      title: "Weekly groceries",
-      amountCents: 14280,
-      type: "expense",
-      occurredAt: date(-5, 17),
-      merchant: "The Fresh Market",
-      paymentMethod: "card",
-      tagsJson: '["essentials"]',
-      status: "completed",
-    },
-    {
-      id: id("transaction", "coffee"),
-      userId: user.id,
-      accountId: id("account", "daily"),
-      categoryId: id("category", "dining"),
-      title: "Morning coffee",
-      amountCents: 650,
-      type: "expense",
-      occurredAt: date(-3, 8),
-      merchant: "Common Ground",
-      paymentMethod: "card",
-      status: "completed",
-    },
-    {
-      id: id("transaction", "fuel"),
-      userId: user.id,
-      accountId: id("account", "daily"),
-      categoryId: id("category", "transport"),
-      title: "Fuel",
-      amountCents: 8240,
-      type: "expense",
-      occurredAt: date(-2, 18),
-      merchant: "Ampol",
-      paymentMethod: "card",
-      status: "completed",
-    },
-    {
-      id: id("transaction", "cinema"),
-      userId: user.id,
-      accountId: id("account", "daily"),
-      categoryId: id("category", "entertainment"),
-      title: "Cinema tickets",
-      amountCents: 3400,
-      type: "expense",
-      occurredAt: date(-1, 20),
-      merchant: "Palace Cinema",
-      paymentMethod: "card",
-      status: "completed",
-    },
-    {
-      id: id("transaction", "chatgpt"),
-      userId: user.id,
-      accountId: id("account", "international"),
-      categoryId: id("category", "subscriptions"),
-      title: "ChatGPT Plus",
-      amountCents: 3299,
-      type: "expense",
-      occurredAt: date(-6, 7),
-      merchant: "OpenAI",
-      paymentMethod: "card",
-      tagsJson: '["software","subscription"]',
-      isRecurring: true,
-      status: "completed",
-    },
-  ];
+  await d1.batch(statements);
+  return loadFinanceUserById(user.id);
+}
 
-  const transferRows: Array<typeof transfers.$inferInsert> = [
-    {
-      id: id("transfer", "salary-bills"),
-      userId: user.id,
-      fromAccountId: id("account", "salary"),
-      toAccountId: id("account", "bills"),
-      amountCents: 220000,
-      transferDate: date(-13, 8),
-      notes: "Monthly bills reserve",
-      status: "completed",
-    },
-    {
-      id: id("transfer", "salary-daily"),
-      userId: user.id,
-      fromAccountId: id("account", "salary"),
-      toAccountId: id("account", "daily"),
-      amountCents: 120000,
-      transferDate: date(-13, 8),
-      notes: "Monthly everyday spending",
-      status: "completed",
-    },
-    {
-      id: id("transfer", "salary-savings"),
-      userId: user.id,
-      fromAccountId: id("account", "salary"),
-      toAccountId: id("account", "savings"),
-      amountCents: 60000,
-      transferDate: date(-13, 8),
-      notes: "Automatic savings contribution",
-      status: "completed",
-    },
-  ];
+function prepareLegacyDelete(
+  d1: D1Database,
+  userId: string,
+  table: LegacyTable,
+  kind: LegacyKind,
+  slugs: readonly string[],
+) {
+  const ids = slugs.map((slug) => scopedId(userId, kind, slug));
+  const placeholders = ids.map(() => "?").join(", ");
+  return d1
+    .prepare(
+      `DELETE FROM ${table}
+       WHERE user_id = ? AND id IN (${placeholders})
+         AND EXISTS (
+           SELECT 1 FROM users
+           WHERE id = ? AND workspace_version < ?
+         )`,
+    )
+    .bind(userId, ...ids, userId, CURRENT_WORKSPACE_VERSION);
+}
 
-  await db.insert(categories).values(categoryRows).onConflictDoNothing();
-  await db.insert(accounts).values(accountRows).onConflictDoNothing();
-  for (let offset = 0; offset < transactionRows.length; offset += 4) {
-    await db
-      .insert(transactions)
-      .values(transactionRows.slice(offset, offset + 4))
-      .onConflictDoNothing();
+function prepareLegacyAccountDelete(
+  d1: D1Database,
+  userId: string,
+  slug: string,
+) {
+  return d1
+    .prepare(
+      `DELETE FROM accounts
+       WHERE id = ? AND user_id = ?
+         AND EXISTS (
+           SELECT 1 FROM users
+           WHERE id = ? AND workspace_version < ?
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM transactions
+           WHERE user_id = ? AND account_id = accounts.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM transfers
+           WHERE user_id = ?
+             AND (
+               from_account_id = accounts.id
+               OR to_account_id = accounts.id
+             )
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM budgets
+           WHERE user_id = ? AND account_id = accounts.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM bills
+           WHERE user_id = ? AND account_id = accounts.id
+         )`,
+    )
+    .bind(
+      scopedId(userId, "account", slug),
+      userId,
+      userId,
+      CURRENT_WORKSPACE_VERSION,
+      userId,
+      userId,
+      userId,
+      userId,
+    );
+}
+
+function prepareSystemCategoryInsert(
+  d1: D1Database,
+  userId: string,
+  category: SystemCategory,
+  requireOldVersion: boolean,
+) {
+  const id = scopedId(userId, "category", category.slug);
+  if (requireOldVersion) {
+    return d1
+      .prepare(
+        `INSERT OR IGNORE INTO categories (
+           id, user_id, name, type, color, icon, is_system
+         )
+         SELECT ?, ?, ?, ?, ?, ?, 1
+         WHERE EXISTS (
+           SELECT 1 FROM users
+           WHERE id = ? AND workspace_version < ?
+         )`,
+      )
+      .bind(
+        id,
+        userId,
+        category.name,
+        category.type,
+        category.color,
+        category.icon,
+        userId,
+        CURRENT_WORKSPACE_VERSION,
+      );
   }
-  await db.insert(transfers).values(transferRows).onConflictDoNothing();
 
-  await db
-    .insert(budgets)
-    .values([
-      {
-        id: id("budget", "groceries"),
-        userId: user.id,
-        categoryId: id("category", "groceries"),
-        name: "Groceries",
-        monthlyLimitCents: 65000,
-        weeklyLimitCents: 16000,
-        dailyLimitCents: 4000,
-      },
-      {
-        id: id("budget", "dining"),
-        userId: user.id,
-        categoryId: id("category", "dining"),
-        name: "Dining & coffee",
-        monthlyLimitCents: 22000,
-        weeklyLimitCents: 5500,
-        dailyLimitCents: 1800,
-      },
-      {
-        id: id("budget", "transport"),
-        userId: user.id,
-        categoryId: id("category", "transport"),
-        name: "Transport",
-        monthlyLimitCents: 32000,
-        weeklyLimitCents: 8000,
-        dailyLimitCents: 2500,
-      },
-      {
-        id: id("budget", "entertainment"),
-        userId: user.id,
-        categoryId: id("category", "entertainment"),
-        name: "Entertainment",
-        monthlyLimitCents: 18000,
-        weeklyLimitCents: 4500,
-        dailyLimitCents: 1800,
-      },
-    ])
-    .onConflictDoNothing();
+  return d1
+    .prepare(
+      `INSERT OR IGNORE INTO categories (
+         id, user_id, name, type, color, icon, is_system
+       ) VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    )
+    .bind(
+      id,
+      userId,
+      category.name,
+      category.type,
+      category.color,
+      category.icon,
+    );
+}
 
-  await db
-    .insert(goals)
-    .values([
-      {
-        id: id("goal", "emergency"),
-        userId: user.id,
-        name: "Emergency fund",
-        targetAmountCents: 1500000,
-        currentAmountCents: 900000,
-        deadline: dateOnly(240),
-        monthlyContributionCents: 60000,
-        notes: "Six months of essential expenses",
-      },
-      {
-        id: id("goal", "holiday"),
-        userId: user.id,
-        name: "Japan trip",
-        targetAmountCents: 650000,
-        currentAmountCents: 238000,
-        deadline: dateOnly(330),
-        monthlyContributionCents: 42000,
-        notes: "Flights, stays and experiences",
-      },
-    ])
-    .onConflictDoNothing();
+function scopedId(userId: string, kind: string, slug: string) {
+  return `${userId}:${kind}:${slug}`;
+}
 
-  await db
-    .insert(bills)
-    .values([
-      {
-        id: id("bill", "rent"),
-        userId: user.id,
-        accountId: id("account", "bills"),
-        categoryId: id("category", "housing"),
-        name: "Apartment rent",
-        amountCents: 185000,
-        dueDate: dateOnly(7),
-        frequency: "monthly",
-        isAutoPay: true,
-      },
-      {
-        id: id("bill", "electricity"),
-        userId: user.id,
-        accountId: id("account", "bills"),
-        categoryId: id("category", "utilities"),
-        name: "Electricity",
-        amountCents: 12400,
-        dueDate: dateOnly(11),
-        frequency: "monthly",
-      },
-      {
-        id: id("bill", "internet"),
-        userId: user.id,
-        accountId: id("account", "bills"),
-        categoryId: id("category", "utilities"),
-        name: "Home internet",
-        amountCents: 7900,
-        dueDate: dateOnly(15),
-        frequency: "monthly",
-        isAutoPay: true,
-      },
-      {
-        id: id("bill", "chatgpt"),
-        userId: user.id,
-        accountId: id("account", "international"),
-        categoryId: id("category", "subscriptions"),
-        name: "ChatGPT Plus",
-        amountCents: 3299,
-        dueDate: dateOnly(19),
-        frequency: "monthly",
-        isAutoPay: true,
-      },
-    ])
-    .onConflictDoNothing();
-
-  await db
-    .insert(activity)
-    .values({
-      id: id("activity", "welcome"),
-      userId: user.id,
-      entityType: "profile",
-      entityId: user.id,
-      action: "seeded",
-      summary: "CashFlow OS workspace created",
-      metadataJson: '{"source":"first-use"}',
-    })
-    .onConflictDoNothing();
-
-  await db
-    .update(users)
-    .set({
-      seededAt: sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-      updatedAt: sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-    })
-    .where(eq(users.id, user.id));
+async function loadFinanceUserById(userId: string): Promise<FinanceUser> {
+  const [user] = await getDb()
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!user) throw new Error("Unable to load the finance profile.");
+  return user;
 }
 
 export async function loadFinanceSnapshot(userId: string) {
@@ -508,14 +383,12 @@ export async function loadFinanceSnapshot(userId: string) {
       .select()
       .from(transactions)
       .where(eq(transactions.userId, userId))
-      .orderBy(desc(transactions.occurredAt), desc(transactions.createdAt))
-      .limit(200),
+      .orderBy(desc(transactions.occurredAt), desc(transactions.createdAt)),
     db
       .select()
       .from(transfers)
       .where(eq(transfers.userId, userId))
-      .orderBy(desc(transfers.transferDate), desc(transfers.createdAt))
-      .limit(100),
+      .orderBy(desc(transfers.transferDate), desc(transfers.createdAt)),
     db
       .select()
       .from(budgets)
@@ -578,17 +451,26 @@ export async function loadFinanceSnapshot(userId: string) {
           ),
         )
       : 0;
-  const healthScore = Math.max(
-    0,
-    Math.min(
-      100,
-      Math.round(
-        52 +
-          Math.min(22, savingsRate * 0.45) +
-          (totalBalanceCents > upcomingBillsCents * 3 ? 14 : 4),
-      ),
-    ),
-  );
+  const hasFinancialData =
+    accountRows.length > 0 ||
+    transactionRows.length > 0 ||
+    transferRows.length > 0 ||
+    budgetRows.length > 0 ||
+    goalRows.length > 0 ||
+    billRows.length > 0;
+  const healthScore = hasFinancialData
+    ? Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(
+            52 +
+              Math.min(22, savingsRate * 0.45) +
+              (totalBalanceCents > upcomingBillsCents * 3 ? 14 : 4),
+          ),
+        ),
+      )
+    : 0;
 
   const spentByCategory = monthlyTransactions
     .filter((item) => item.type === "expense" && item.categoryId)
@@ -633,28 +515,30 @@ export async function loadFinanceSnapshot(userId: string) {
 }
 
 export async function resetFinanceUser(user: FinanceUser): Promise<FinanceUser> {
-  const db = getDb();
-  await db.delete(users).where(eq(users.id, user.id));
-  const replacement: typeof users.$inferInsert = {
-    id: user.id,
-    email: user.email,
-    displayName: user.displayName,
-    defaultCurrency: user.defaultCurrency,
-  };
-  await db.insert(users).values(replacement);
-  const [fresh] = await db
-    .select()
-    .from(users)
-    .where(eq(users.id, user.id))
-    .limit(1);
-  if (!fresh) throw new Error("Unable to reset the finance workspace.");
-  await seedFinanceUser(fresh);
-  const [seeded] = await db
-    .select()
-    .from(users)
-    .where(eq(users.id, user.id))
-    .limit(1);
-  return seeded ?? fresh;
+  const d1 = getD1Binding();
+  await d1.batch([
+    d1.prepare("DELETE FROM activity WHERE user_id = ?").bind(user.id),
+    d1.prepare("DELETE FROM bills WHERE user_id = ?").bind(user.id),
+    d1.prepare("DELETE FROM budgets WHERE user_id = ?").bind(user.id),
+    d1.prepare("DELETE FROM transfers WHERE user_id = ?").bind(user.id),
+    d1.prepare("DELETE FROM transactions WHERE user_id = ?").bind(user.id),
+    d1.prepare("DELETE FROM goals WHERE user_id = ?").bind(user.id),
+    d1.prepare("DELETE FROM accounts WHERE user_id = ?").bind(user.id),
+    d1.prepare("DELETE FROM categories WHERE user_id = ?").bind(user.id),
+    ...SYSTEM_CATEGORIES.map((category) =>
+      prepareSystemCategoryInsert(d1, user.id, category, false),
+    ),
+    d1
+      .prepare(
+        `UPDATE users
+         SET workspace_version = ?, seeded_at = NULL,
+             updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         WHERE id = ?`,
+      )
+      .bind(CURRENT_WORKSPACE_VERSION, user.id),
+  ]);
+
+  return loadFinanceUserById(user.id);
 }
 
 export function impactCents(input: {
@@ -695,7 +579,7 @@ function identityFromRequest(request: Request) {
     url.hostname === "127.0.0.1" ||
     url.hostname === "::1" ||
     url.hostname === "[::1]";
-  const email = emailHeader || (isLocal ? "demo@cashflow.local" : "");
+  const email = emailHeader || (isLocal ? "local@cashflow.local" : "");
   if (!email) return null;
 
   const encodedName = request.headers.get(NAME_HEADER);
@@ -703,8 +587,8 @@ function identityFromRequest(request: Request) {
     encodedName &&
     request.headers.get(NAME_ENCODING_HEADER) === "percent-encoded-utf-8"
       ? safeDecode(encodedName) || email.split("@")[0]
-      : email === "demo@cashflow.local"
-        ? "Alex Morgan"
+      : email === "local@cashflow.local"
+        ? "Local user"
         : email.split("@")[0];
 
   return { email, displayName };

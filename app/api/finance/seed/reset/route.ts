@@ -2,27 +2,34 @@ import {
   loadFinanceSnapshot,
   resetFinanceUser,
 } from "@/db/finance";
-import { financeRoute } from "../../_shared";
+import {
+  ApiInputError,
+  financeRoute,
+  readJsonObject,
+} from "../../_shared";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  return financeRoute(
-    request,
-    async (user) => {
-      const seededUser = await resetFinanceUser(user);
-      const snapshot = await loadFinanceSnapshot(seededUser.id);
-      return Response.json({
-        reset: true,
-        user: {
-          id: seededUser.id,
-          email: seededUser.email,
-          displayName: seededUser.displayName,
-          defaultCurrency: seededUser.defaultCurrency,
-        },
-        ...snapshot,
-      });
-    },
-    { seed: false },
-  );
+  return financeRoute(request, async (user) => {
+    const payload = await readJsonObject(request);
+    if (payload.confirmation !== "CLEAR FINANCE WORKSPACE") {
+      throw new ApiInputError(
+        'Type "CLEAR FINANCE WORKSPACE" to confirm permanent deletion.',
+      );
+    }
+    const cleanUser = await resetFinanceUser(user);
+    const snapshot = await loadFinanceSnapshot(cleanUser.id);
+    return Response.json({
+      reset: true,
+      user: {
+        id: cleanUser.id,
+        email: cleanUser.email,
+        displayName: cleanUser.displayName,
+        defaultCurrency: cleanUser.defaultCurrency,
+        workspaceVersion: cleanUser.workspaceVersion,
+      },
+      ...snapshot,
+    });
+  });
 }

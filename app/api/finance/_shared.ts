@@ -15,10 +15,11 @@ export async function financeRoute(
   handler: (
     user: Awaited<ReturnType<typeof getFinanceUser>>,
   ) => Promise<Response>,
-  options: { seed?: boolean } = {},
 ) {
   try {
-    const user = await getFinanceUser(request, options);
+    // Every finance request resolves identity and atomically upgrades the
+    // workspace before the route handler reads or mutates user data.
+    const user = await getFinanceUser(request);
     return await handler(user);
   } catch (error) {
     if (error instanceof FinanceAuthError) {

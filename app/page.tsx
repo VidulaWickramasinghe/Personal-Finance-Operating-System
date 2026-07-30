@@ -5,7 +5,8 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const user = await getChatGPTUser();
-  const displayName = user?.fullName ?? user?.displayName?.split("@")[0] ?? "Wiche";
+  const displayName =
+    user?.fullName ?? user?.displayName?.split("@")[0] ?? "there";
 
   return <CashflowApp userName={displayName} />;
 }

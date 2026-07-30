@@ -17,19 +17,29 @@ import {
   budgetSummary,
   categoryName,
   categorySpending,
+  completedMonthTransactions,
+  currentMonthKey,
+  currentMonthStart,
+  currentQuarterStart,
+  currentWeekStart,
+  currentYearStart,
   currency,
+  daysInCurrentMonth,
   financialHealthScore,
   goalMonthsRemaining,
+  headingDate,
+  localDate,
   longDate,
+  monthLabel,
   monthlyExpenses,
   monthlyIncome,
+  reportDate,
   savingsRate,
   shortDate,
   sortedTransactions,
   spendingForBudget,
   totalBalance,
 } from "./finance";
-import { CASHFLOW_SEED } from "./seed";
 import type {
   Account,
   Bill,
@@ -78,6 +88,17 @@ const API_RESOURCE: Record<ResourceKind, string> = {
   bill: "bills",
 };
 
+const EMPTY_FINANCE_DATA: FinanceData = {
+  accounts: [],
+  categories: [],
+  transactions: [],
+  transfers: [],
+  budgets: [],
+  goals: [],
+  bills: [],
+  activity: [],
+};
+
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -93,9 +114,67 @@ function valueInDollars(raw: any, plain: string, cents: string, fallback = 0) {
   return fallback;
 }
 
+function localTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "12:00";
+  return `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
+}
+
+function localDateFromTimestamp(value: string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? localDate() : localDate(parsed);
+}
+
+function defaultGoalDeadline() {
+  const value = new Date();
+  value.setFullYear(value.getFullYear() + 1);
+  return localDate(value);
+}
+
+function creationRequirement(kind: ResourceKind, data: FinanceData) {
+  const activeAccounts = data.accounts.filter((account) => !account.archived);
+  const expenseCategories = data.categories.filter(
+    (category) => category.kind === "expense" || category.kind === "both",
+  );
+  const transactionCategories = data.categories.filter(
+    (category) => category.kind === "income" || category.kind === "expense" || category.kind === "both",
+  );
+
+  if (kind === "transaction") {
+    if (!activeAccounts.length) return "Add an account before recording a transaction.";
+    if (!transactionCategories.length) return "Transaction categories are still being prepared. Try again shortly.";
+  }
+  if (kind === "transfer" && activeAccounts.length < 2) {
+    return "Add at least two active accounts before transferring money.";
+  }
+  if (kind === "budget" && !expenseCategories.length) {
+    return "Expense categories are still being prepared. Try again shortly.";
+  }
+  if (kind === "bill") {
+    if (!activeAccounts.length) return "Add an account before scheduling a bill.";
+    if (!expenseCategories.length) return "Expense categories are still being prepared. Try again shortly.";
+  }
+  return null;
+}
+
 function normalizeFinance(raw: any): FinanceData {
   const source = raw?.data ?? raw;
-  if (!source || !Array.isArray(source.accounts)) return CASHFLOW_SEED;
+  const requiredLists = [
+    "accounts",
+    "categories",
+    "transactions",
+    "transfers",
+    "budgets",
+    "goals",
+    "bills",
+  ];
+  if (
+    !source ||
+    typeof source !== "object" ||
+    requiredLists.some((key) => !Array.isArray(source[key]))
+  ) {
+    throw new Error("The finance service returned an invalid data snapshot.");
+  }
 
   return {
     accounts: source.accounts.map((item: any) => ({
@@ -150,8 +229,16 @@ function normalizeFinance(raw: any): FinanceData {
       type: item.type ?? "expense",
       categoryId: String(item.categoryId ?? ""),
       accountId: String(item.accountId ?? ""),
-      date: String(item.date ?? item.transactionDate ?? item.occurredAt ?? "2026-07-26").slice(0, 10),
-      time: item.time ?? item.transactionTime ?? (typeof item.occurredAt === "string" ? item.occurredAt.slice(11, 16) : "12:00"),
+      date:
+        item.date ??
+        item.transactionDate ??
+        (typeof item.occurredAt === "string"
+          ? localDateFromTimestamp(item.occurredAt)
+          : localDate()),
+      time:
+        item.time ??
+        item.transactionTime ??
+        (typeof item.occurredAt === "string" ? localTime(item.occurredAt) : "12:00"),
       merchant: item.merchant ?? "",
       paymentMethod: item.paymentMethod ?? "Debit card",
       tags: Array.isArray(item.tags)
@@ -182,7 +269,7 @@ function normalizeFinance(raw: any): FinanceData {
       fromAccountId: String(item.fromAccountId ?? ""),
       toAccountId: String(item.toAccountId ?? ""),
       amount: valueInDollars(item, "amount", "amountCents"),
-      date: String(item.date ?? item.transferDate ?? "2026-07-26").slice(0, 10),
+      date: String(item.date ?? item.transferDate ?? localDate()).slice(0, 10),
       notes: item.notes ?? "",
       status: item.status ?? "completed",
       createdAt: item.createdAt,
@@ -191,10 +278,11 @@ function normalizeFinance(raw: any): FinanceData {
       id: String(item.id),
       name: item.name ?? "Budget",
       categoryId: String(item.categoryId ?? ""),
+      accountId: item.accountId ?? null,
       monthlyLimit: valueInDollars(item, "monthlyLimit", "monthlyLimitCents"),
       weeklyLimit: valueInDollars(item, "weeklyLimit", "weeklyLimitCents"),
       dailyLimit: valueInDollars(item, "dailyLimit", "dailyLimitCents"),
-      periodStart: item.periodStart ?? "2026-07-01",
+      resetDay: Number(item.resetDay ?? 1),
       status: item.status ?? "active",
     })),
     goals: (source.goals ?? []).map((item: any) => ({
@@ -202,7 +290,7 @@ function normalizeFinance(raw: any): FinanceData {
       name: item.name ?? "Goal",
       targetAmount: valueInDollars(item, "targetAmount", "targetAmountCents"),
       currentAmount: valueInDollars(item, "currentAmount", "currentAmountCents"),
-      deadline: item.deadline ?? "2027-12-31",
+      deadline: item.deadline ?? defaultGoalDeadline(),
       monthlyContribution: valueInDollars(
         item,
         "monthlyContribution",
@@ -210,18 +298,20 @@ function normalizeFinance(raw: any): FinanceData {
       ),
       notes: item.notes ?? "",
       color: item.color ?? "#6f74e8",
+      status: item.status ?? "active",
     })),
     bills: (source.bills ?? []).map((item: any) => ({
       id: String(item.id),
       name: item.name ?? "Bill",
       amount: valueInDollars(item, "amount", "amountCents"),
-      dueDate: item.dueDate ?? "2026-07-31",
+      dueDate: item.dueDate ?? localDate(),
       accountId: String(item.accountId ?? ""),
       categoryId: String(item.categoryId ?? ""),
       reminderDays: Number(item.reminderDays ?? 3),
       frequency: item.frequency ?? "monthly",
       status: item.status ?? "upcoming",
       autopay: Boolean(item.autopay ?? item.autoPay ?? item.isAutoPay),
+      notes: item.notes ?? "",
     })),
     activity: source.activity ?? [],
   };
@@ -249,6 +339,7 @@ function payloadForApi(kind: ResourceKind, value: any) {
     value.monthlyLimitCents = Math.round(value.monthlyLimit * 100);
     value.weeklyLimitCents = Math.round(value.weeklyLimit * 100);
     value.dailyLimitCents = Math.round(value.dailyLimit * 100);
+    value.resetDay = Number(value.resetDay ?? 1);
   }
   if (kind === "goal") {
     value.targetAmountCents = Math.round(value.targetAmount * 100);
@@ -257,7 +348,7 @@ function payloadForApi(kind: ResourceKind, value: any) {
   }
   if (kind === "transaction") {
     value.isRecurring = Boolean(value.recurring);
-    value.occurredAt = new Date(`${value.date}T${value.time || "12:00"}:00+10:00`).toISOString();
+    value.occurredAt = new Date(`${value.date}T${value.time || "12:00"}:00`).toISOString();
     value.receiptUrl = value.receiptUrl ?? (value.receiptKey ? `/api/finance/receipts/${encodeURIComponent(value.receiptKey)}` : undefined);
   }
   if (kind === "transfer") {
@@ -271,12 +362,14 @@ function payloadForApi(kind: ResourceKind, value: any) {
 }
 
 export default function CashflowApp({ userName }: { userName: string }) {
-  const [data, setData] = useState<FinanceData>(CASHFLOW_SEED);
+  const [data, setData] = useState<FinanceData>(EMPTY_FINANCE_DATA);
   const [active, setActive] = useState<ModuleId>("overview");
   const [editor, setEditor] = useState<EditorState>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedData, setHasLoadedData] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [commandOpen, setCommandOpen] = useState(false);
@@ -289,15 +382,24 @@ export default function CashflowApp({ userName }: { userName: string }) {
     if (!silent) setIsLoading(true);
     try {
       const response = await fetch("/api/finance", { cache: "no-store" });
-      if (!response.ok) throw new Error("Could not load your finance data.");
+      if (!response.ok) {
+        const failure = await response
+          .json()
+          .catch(() => null) as { error?: string } | null;
+        throw new Error(failure?.error ?? "Could not load your finance data.");
+      }
       const payload = await response.json();
       setData(normalizeFinance(payload));
-    } catch {
-      setToast({
-        title: "Preview data loaded",
-        detail: "Your secure finance store will connect automatically when published.",
-        tone: "info",
-      });
+      setHasLoadedData(true);
+      setLoadError(null);
+      return true;
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Could not load your finance data.",
+      );
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -330,6 +432,28 @@ export default function CashflowApp({ userName }: { userName: string }) {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
+  const openEditor = useCallback(
+    (state: EditorState) => {
+      if (!state) {
+        setEditor(null);
+        return;
+      }
+      if (state.mode === "create") {
+        const requirement = creationRequirement(state.kind, data);
+        if (requirement) {
+          setToast({
+            title: "One setup step first",
+            detail: requirement,
+            tone: "info",
+          });
+          return;
+        }
+      }
+      setEditor(state);
+    },
+    [data],
+  );
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement;
@@ -342,7 +466,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
         setCommandOpen((value) => !value);
       } else if (!typing && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        setEditor({ kind: "transaction", mode: "create" });
+        openEditor({ kind: "transaction", mode: "create" });
       } else if (!typing && event.key === "/") {
         event.preventDefault();
         setActive("transactions");
@@ -357,7 +481,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [openEditor]);
 
   const saveResource = useCallback(
     async (kind: ResourceKind, item: any, editingId?: string) => {
@@ -410,11 +534,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
             .catch(() => null) as { error?: string } | null;
           throw new Error(failure?.error ?? "Unable to save this record.");
         }
-        await loadData(true);
+        const refreshed = await loadData(true);
         setToast({
           title: `${kind[0].toUpperCase()}${kind.slice(1)} ${editingId ? "updated" : "created"}`,
-          detail: "Dashboard totals and forecasts are up to date.",
-          tone: "success",
+          detail: refreshed
+            ? "Dashboard totals and forecasts are up to date."
+            : "Saved in the backend. Retry the refresh to load the latest totals.",
+          tone: refreshed ? "success" : "info",
         });
       } catch (error) {
         setData(snapshot);
@@ -451,8 +577,14 @@ export default function CashflowApp({ userName }: { userName: string }) {
           .catch(() => null) as { error?: string } | null;
         throw new Error(failure?.error ?? "Unable to delete this record.");
       }
-      await loadData(true);
-      setToast({ title: `${label} deleted`, detail: "Your totals were recalculated.", tone: "success" });
+      const refreshed = await loadData(true);
+      setToast({
+        title: `${label} deleted`,
+        detail: refreshed
+          ? "Your totals were recalculated."
+          : "Deleted from the backend. Retry the refresh to load the latest totals.",
+        tone: refreshed ? "success" : "info",
+      });
     } catch (error) {
       setData(snapshot);
       setToast({
@@ -480,11 +612,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
           method: "POST",
         });
         if (!response.ok) throw new Error("Unable to mark the bill paid.");
-        await loadData(true);
+        const refreshed = await loadData(true);
         setToast({
           title: `${bill.name} paid`,
-          detail: `${currency(bill.amount)} was recorded and your account balance updated.`,
-          tone: "success",
+          detail: refreshed
+            ? `${currency(bill.amount)} was recorded and your account balance updated.`
+            : "Payment was recorded in the backend. Retry the refresh to load the latest balance.",
+          tone: refreshed ? "success" : "info",
         });
       } catch (error) {
         setData(snapshot);
@@ -505,6 +639,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
 
   const activeLabel = NAV_ITEMS.find((item) => item.id === active)?.label ?? "Overview";
   const overdueCount = data.bills.filter((bill) => bill.status === "overdue").length;
+  const blockingLoadError = Boolean(loadError && !hasLoadedData);
 
   return (
     <div className="app-shell">
@@ -561,7 +696,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
             <span>Personal finances</span><span>/</span><strong>{activeLabel}</strong>
           </div>
           <button className="month-picker" aria-label="Select reporting month">
-            <span aria-hidden="true">◷</span><span>July 2026</span><span aria-hidden="true">⌄</span>
+            <span aria-hidden="true">◷</span><span>{monthLabel()}</span>
           </button>
           <div className="topbar-actions">
             <button className="search-trigger" onClick={() => setCommandOpen(true)}>
@@ -584,7 +719,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
             <button className="profile-button" onClick={() => setSettingsOpen(true)} aria-label="Open profile settings">
               <span>WA</span>
             </button>
-            <button className="primary-button top-add" onClick={() => setEditor({ kind: "transaction", mode: "create" })}>
+            <button className="primary-button top-add" onClick={() => openEditor({ kind: "transaction", mode: "create" })}>
               <span aria-hidden="true">＋</span> Add transaction
             </button>
           </div>
@@ -592,25 +727,39 @@ export default function CashflowApp({ userName }: { userName: string }) {
 
         <main id="main-content" className="main-content" tabIndex={-1}>
           {isLoading ? <LoadingView /> : null}
-          {!isLoading && active === "overview" ? (
+          {!isLoading && blockingLoadError ? (
+            <DataErrorView
+              detail={loadError ?? "Could not load your finance data."}
+              onRetry={() => void loadData()}
+            />
+          ) : null}
+          {!isLoading && loadError && hasLoadedData ? (
+            <div className="data-warning" role="status">
+              <span>!</span>
+              <p><strong>Could not refresh the latest data.</strong><small>{loadError}</small></p>
+              <button className="secondary-button small" onClick={() => void loadData()}>Retry</button>
+            </div>
+          ) : null}
+          {!isLoading && !blockingLoadError && active === "overview" ? (
             <OverviewView
               data={data}
               userName={userName}
               onNavigate={setActive}
-              onEdit={setEditor}
+              onEdit={openEditor}
               onAssistant={() => setAssistantOpen(true)}
             />
           ) : null}
-          {!isLoading && active === "transactions" ? (
+          {!isLoading && !blockingLoadError && active === "transactions" ? (
             <TransactionsView
               data={data}
               searchRef={searchRef}
-              onEdit={setEditor}
+              onEdit={openEditor}
               onDelete={(transaction) =>
                 setConfirm({ kind: "transaction", id: transaction.id, label: transaction.title })
               }
               onDuplicate={(id) => duplicateResource("transaction", id)}
               onBulkDelete={async (ids) => {
+                const snapshot = data;
                 setData((current) => ({
                   ...current,
                   transactions: current.transactions.filter((item) => !ids.includes(item.id)),
@@ -621,12 +770,18 @@ export default function CashflowApp({ userName }: { userName: string }) {
                   body: JSON.stringify({ ids }),
                 });
                 if (!response.ok) {
-                  await loadData(true);
+                  setData(snapshot);
                   setToast({ title: "Bulk delete failed", detail: "Your records were restored.", tone: "danger" });
                   return;
                 }
-                void loadData(true);
-                setToast({ title: `${ids.length} transactions deleted`, detail: "Balances and budgets were recalculated.", tone: "success" });
+                const refreshed = await loadData(true);
+                setToast({
+                  title: `${ids.length} transactions deleted`,
+                  detail: refreshed
+                    ? "Balances and budgets were recalculated."
+                    : "Deleted from the backend. Retry the refresh to load the latest totals.",
+                  tone: refreshed ? "success" : "info",
+                });
               }}
               onBulkUpdate={async (ids, changes) => {
                 const response = await fetch("/api/finance/transactions/bulk", {
@@ -638,15 +793,21 @@ export default function CashflowApp({ userName }: { userName: string }) {
                   setToast({ title: "Bulk edit failed", detail: "No records were changed.", tone: "danger" });
                   return;
                 }
-                await loadData(true);
-                setToast({ title: `${ids.length} transactions updated`, detail: "Dashboard totals are current.", tone: "success" });
+                const refreshed = await loadData(true);
+                setToast({
+                  title: `${ids.length} transactions updated`,
+                  detail: refreshed
+                    ? "Dashboard totals are current."
+                    : "Updated in the backend. Retry the refresh to load the latest totals.",
+                  tone: refreshed ? "success" : "info",
+                });
               }}
             />
           ) : null}
-          {!isLoading && active === "accounts" ? (
+          {!isLoading && !blockingLoadError && active === "accounts" ? (
             <AccountsView
               data={data}
-              onEdit={setEditor}
+              onEdit={openEditor}
               onDelete={(account) =>
                 setConfirm({ kind: "account", id: account.id, label: account.name })
               }
@@ -659,33 +820,33 @@ export default function CashflowApp({ userName }: { userName: string }) {
               }
             />
           ) : null}
-          {!isLoading && active === "budgets" ? (
+          {!isLoading && !blockingLoadError && active === "budgets" ? (
             <BudgetsView
               data={data}
-              onEdit={setEditor}
+              onEdit={openEditor}
               onDelete={(budget) =>
                 setConfirm({ kind: "budget", id: budget.id, label: budget.name })
               }
               onDuplicate={(id) => duplicateResource("budget", id)}
               onReset={(budget) =>
-                void saveResource("budget", { ...budget, periodStart: "2026-07-01" }, budget.id)
+                void saveResource("budget", { ...budget, resetDay: 1 }, budget.id)
               }
             />
           ) : null}
-          {!isLoading && active === "goals" ? (
+          {!isLoading && !blockingLoadError && active === "goals" ? (
             <GoalsView
               data={data}
-              onEdit={setEditor}
+              onEdit={openEditor}
               onDelete={(goal) =>
                 setConfirm({ kind: "goal", id: goal.id, label: goal.name })
               }
               onDuplicate={(id) => duplicateResource("goal", id)}
             />
           ) : null}
-          {!isLoading && active === "bills" ? (
+          {!isLoading && !blockingLoadError && active === "bills" ? (
             <BillsView
               data={data}
-              onEdit={setEditor}
+              onEdit={openEditor}
               onDelete={(bill) =>
                 setConfirm({ kind: "bill", id: bill.id, label: bill.name })
               }
@@ -693,7 +854,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
               onPay={(bill) => void markBillPaid(bill)}
             />
           ) : null}
-          {!isLoading && active === "reports" ? (
+          {!isLoading && !blockingLoadError && active === "reports" ? (
             <ReportsView data={data} onToast={setToast} />
           ) : null}
         </main>
@@ -705,7 +866,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
             <span>{item.glyph}</span><small>{item.label}</small>
           </button>
         ))}
-        <button className="mobile-add" onClick={() => setEditor({ kind: "transaction", mode: "create" })}>
+        <button className="mobile-add" onClick={() => openEditor({ kind: "transaction", mode: "create" })}>
           <span>＋</span><small>Add</small>
         </button>
         <button className={active === "budgets" ? "active" : ""} onClick={() => setActive("budgets")}>
@@ -741,7 +902,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
             setCommandOpen(false);
           }}
           onCreate={(kind) => {
-            setEditor({ kind, mode: "create" });
+            openEditor({ kind, mode: "create" });
             setCommandOpen(false);
           }}
           onAssistant={() => {
@@ -783,6 +944,27 @@ function LoadingView() {
       <div className="loading-grid"><div /><div /></div>
       <span className="sr-only">Loading your financial workspace</span>
     </div>
+  );
+}
+
+function DataErrorView({
+  detail,
+  onRetry,
+}: {
+  detail: string;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="data-error card" role="alert">
+      <span className="metric-icon danger">!</span>
+      <div>
+        <span className="eyebrow">Finance data unavailable</span>
+        <h1>We couldn’t open your workspace</h1>
+        <p>{detail}</p>
+        <small>No sample records were substituted. Your saved data remains in the secure backend.</small>
+      </div>
+      <button className="primary-button" onClick={onRetry}>Try again</button>
+    </section>
   );
 }
 
@@ -873,6 +1055,38 @@ function OverviewView({
   onEdit: (state: EditorState) => void;
   onAssistant: () => void;
 }) {
+  if (!data.accounts.length) {
+    return (
+      <div className="page-stack">
+        <PageHeading
+          eyebrow={headingDate()}
+          title={`Welcome, ${userName.split(" ")[0] || "there"}`}
+          detail="Start with an account so every transaction, bill and transfer has a secure home."
+        />
+        <section className="first-run-card card">
+          <span className="first-run-mark">▰</span>
+          <div>
+            <span className="eyebrow">Your workspace is ready</span>
+            <h2>Add your first financial account</h2>
+            <p>
+              Enter the real opening balance for a bank account, credit card,
+              loan, savings account or cash wallet. CashFlow OS will keep future
+              changes in the backend and build your dashboard from those records.
+            </p>
+            <ol>
+              <li><b>1</b><span><strong>Add an account</strong><small>Name it by purpose and enter its current balance.</small></span></li>
+              <li><b>2</b><span><strong>Record transactions</strong><small>Income and expenses update balances automatically.</small></span></li>
+              <li><b>3</b><span><strong>Plan ahead</strong><small>Create budgets, goals and bill reminders from your own data.</small></span></li>
+            </ol>
+          </div>
+          <button className="primary-button" onClick={() => onEdit({ kind: "account", mode: "create" })}>
+            ＋ Add first account
+          </button>
+        </section>
+      </div>
+    );
+  }
+
   const balance = totalBalance(data);
   const income = monthlyIncome(data);
   const expenses = monthlyExpenses(data);
@@ -890,6 +1104,8 @@ function OverviewView({
     .filter((bill) => bill.status !== "paid")
     .reduce((sum, bill) => sum + bill.amount, 0);
   const categories = categorySpending(data);
+  const monthTransactions = completedMonthTransactions(data);
+  const hasMonthlyActivity = monthTransactions.length > 0;
   const topCategories = categories.slice(0, 5);
   const spendingTotal = Math.max(1, categories.reduce((sum, item) => sum + item.amount, 0));
   const donutStops = topCategories
@@ -908,8 +1124,9 @@ function OverviewView({
     )
     .stops
     .join(", ");
-  const weeks = [1, 2, 3, 4].map((week) => {
-    const rows = data.transactions.filter((transaction) => {
+  const weekCount = Math.ceil(daysInCurrentMonth() / 7);
+  const weeks = Array.from({ length: weekCount }, (_, index) => index + 1).map((week) => {
+    const rows = monthTransactions.filter((transaction) => {
       const day = Number(transaction.date.slice(-2));
       return Math.ceil(day / 7) === week && transaction.status === "completed";
     });
@@ -925,13 +1142,25 @@ function OverviewView({
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
     .slice(0, 4);
   const recent = sortedTransactions(data.transactions, "newest").slice(0, 6);
+  const activeAccounts = data.accounts.filter((account) => !account.archived);
+  const accountChartMax = Math.max(
+    1,
+    ...activeAccounts.map((account) => Math.max(0, account.balance)),
+  );
+  const topGoal = data.goals
+    .filter((goal) => goal.currentAmount < goal.targetAmount)
+    .sort(
+      (left, right) =>
+        right.currentAmount / right.targetAmount -
+        left.currentAmount / left.targetAmount,
+    )[0];
 
   return (
     <div className="page-stack">
       <PageHeading
-        eyebrow="Sunday, 26 July"
-        title={`Good morning, ${userName.split(" ")[0] || "there"}`}
-        detail="Here’s your financial position and what needs attention this week."
+        eyebrow={headingDate()}
+        title={`Welcome back, ${userName.split(" ")[0] || "there"}`}
+        detail={`Here’s your financial position for ${monthLabel()}.`}
         actions={
           <>
             <button className="secondary-button" onClick={onAssistant}>✦ Ask CashFlow</button>
@@ -944,27 +1173,38 @@ function OverviewView({
         <div className="balance-block">
           <span className="hero-label">Total cash balance <button aria-label="Hide balances">◉</button></span>
           <div className="hero-balance">{currency(balance)}</div>
-          <div className="hero-change"><span>↗ 8.4%</span> <small>vs last month · +{currency(2810)}</small></div>
+          <div className="hero-change"><span>{activeAccounts.length}</span> <small>active {activeAccounts.length === 1 ? "account" : "accounts"} included</small></div>
         </div>
-        <div className="hero-chart" aria-label="Balance history rose from 31,400 dollars to 36,525 dollars over six months">
-          {[42, 48, 45, 59, 54, 67, 64, 78, 74, 86, 82, 96].map((height, index) => (
-            <span key={index} style={{ height: `${height}%` }} />
+        <div className="hero-chart" aria-label="Current account balance comparison">
+          {activeAccounts.map((account) => (
+            <span
+              key={account.id}
+              style={{
+                height: `${Math.max(4, (Math.max(0, account.balance) / accountChartMax) * 100)}%`,
+                background: account.color,
+              }}
+              title={`${account.name}: ${currency(account.balance, account.currency)}`}
+            />
           ))}
         </div>
         <div className="health-block">
           <div className="health-ring" style={{ "--score": `${score * 3.6}deg` } as React.CSSProperties}>
-            <span><strong>{score}</strong><small>/ 100</small></span>
+            <span><strong>{hasMonthlyActivity ? score : "—"}</strong><small>{hasMonthlyActivity ? "/ 100" : "Add data"}</small></span>
           </div>
-          <div><span className="hero-label">Financial health</span><strong>{score >= 80 ? "Excellent" : score >= 65 ? "Good" : "Needs attention"}</strong><small>Top 18% of savers</small></div>
+          <div>
+            <span className="hero-label">Financial health</span>
+            <strong>{hasMonthlyActivity ? (score >= 80 ? "Excellent" : score >= 65 ? "Good" : "Needs attention") : "Not enough activity"}</strong>
+            <small>{hasMonthlyActivity ? "Based on cash flow, budgets and bills" : "Add this month’s income and expenses"}</small>
+          </div>
           <button aria-label="View health details">›</button>
         </div>
       </section>
 
       <section className="metric-grid" aria-label="Monthly metrics">
-        <MetricCard glyph="↗" label="Monthly income" value={currency(income)} trend="+4.2%" tone="positive" detail="2 income sources" />
-        <MetricCard glyph="↙" label="Monthly expenses" value={currency(expenses)} trend="-6.8%" tone="positive" detail={`${data.transactions.filter((item) => item.type === "expense").length} transactions`} />
-        <MetricCard glyph="⌁" label="Net cash flow" value={currency(cashFlow)} trend="+12.1%" tone="positive" detail="Income less expenses" />
-        <MetricCard glyph="◎" label="Savings rate" value={`${rate.toFixed(1)}%`} trend="+2.7 pts" tone="positive" detail={`${currency(cashFlow)} retained`} />
+        <MetricCard glyph="↗" label="Monthly income" value={currency(income)} trend={`${monthTransactions.filter((item) => item.type === "income").length}`} tone="positive" detail="completed income records" />
+        <MetricCard glyph="↙" label="Monthly expenses" value={currency(expenses)} trend={`${monthTransactions.filter((item) => item.type === "expense").length}`} tone={expenses > income && income > 0 ? "danger" : "neutral"} detail="completed expense records" />
+        <MetricCard glyph="⌁" label="Net cash flow" value={currency(cashFlow)} trend={cashFlow > 0 ? "Positive" : cashFlow < 0 ? "Negative" : "Even"} tone={cashFlow > 0 ? "positive" : cashFlow < 0 ? "danger" : "neutral"} detail="Income less expenses" />
+        <MetricCard glyph="◎" label="Savings rate" value={income ? `${rate.toFixed(1)}%` : "—"} trend={income ? "Current" : "No income"} tone={rate > 0 ? "positive" : "neutral"} detail={income ? `${currency(Math.max(0, cashFlow))} retained` : "Add income to calculate"} />
       </section>
 
       <section className="micro-metric-row" aria-label="Planning indicators">
@@ -976,61 +1216,77 @@ function OverviewView({
 
       <section className="dashboard-grid">
         <article className="card cashflow-card span-8">
-          <CardHeader title="Income vs expenses" detail="Monthly cash flow · July 2026" action={<button className="text-button" onClick={() => onNavigate("reports")}>View report ›</button>} />
+          <CardHeader title="Income vs expenses" detail={`Monthly cash flow · ${monthLabel()}`} action={<button className="text-button" onClick={() => onNavigate("reports")}>View report ›</button>} />
           <div className="chart-summary">
             <div><span>Income</span><strong>{currency(income)}</strong></div>
             <div><span>Expenses</span><strong>{currency(expenses)}</strong></div>
             <div className="chart-legend"><span><i className="legend-income" /> Income</span><span><i className="legend-expense" /> Expenses</span></div>
           </div>
-          <div className="bar-chart" role="img" aria-label={`Weekly comparison. Total income ${currency(income)}, total expenses ${currency(expenses)}.`}>
-            <div className="chart-y-axis"><span>{currency(chartMax, "AUD", true)}</span><span>{currency(chartMax * .66, "AUD", true)}</span><span>{currency(chartMax * .33, "AUD", true)}</span><span>$0</span></div>
-            {weeks.map((week) => (
-              <div className="bar-group" key={week.week}>
-                <div className="bars">
-                  <span className="income-bar" style={{ height: `${Math.max(3, (week.income / chartMax) * 100)}%` }} title={`${week.week} income ${currency(week.income)}`} />
-                  <span className="expense-bar" style={{ height: `${Math.max(3, (week.expenses / chartMax) * 100)}%` }} title={`${week.week} expenses ${currency(week.expenses)}`} />
-                </div>
-                <small>{week.week}</small>
+          {hasMonthlyActivity ? (
+            <>
+              <div className="bar-chart" role="img" aria-label={`Weekly comparison. Total income ${currency(income)}, total expenses ${currency(expenses)}.`}>
+                <div className="chart-y-axis"><span>{currency(chartMax, "AUD", true)}</span><span>{currency(chartMax * .66, "AUD", true)}</span><span>{currency(chartMax * .33, "AUD", true)}</span><span>$0</span></div>
+                {weeks.map((week) => (
+                  <div className="bar-group" key={week.week}>
+                    <div className="bars">
+                      <span className="income-bar" style={{ height: `${(week.income / chartMax) * 100}%` }} title={`${week.week} income ${currency(week.income)}`} />
+                      <span className="expense-bar" style={{ height: `${(week.expenses / chartMax) * 100}%` }} title={`${week.week} expenses ${currency(week.expenses)}`} />
+                    </div>
+                    <small>{week.week}</small>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="chart-insight"><span className="insight-spark">✦</span><p><strong>Your cash flow improved 12.1%</strong><br />Lower dining and transport costs drove most of the improvement.</p><button onClick={onAssistant}>Explore</button></div>
+              <div className="chart-insight"><span className="insight-spark">✦</span><p><strong>{cashFlow >= 0 ? `${currency(cashFlow)} remains after completed expenses.` : `Completed expenses exceed income by ${currency(Math.abs(cashFlow))}.`}</strong><br />This view only uses records saved for {monthLabel()}.</p><button onClick={onAssistant}>Explore</button></div>
+            </>
+          ) : (
+            <EmptyState glyph="↕" title="No activity this month" detail="Add income or an expense to start your monthly cash-flow chart." action={<button className="primary-button" onClick={() => onEdit({ kind: "transaction", mode: "create" })}>Add transaction</button>} />
+          )}
         </article>
 
         <article className="card spending-card span-4">
           <CardHeader title="Spending by category" detail="Completed expenses" action={<button className="icon-mini" aria-label="More category options">•••</button>} />
-          <div className="donut-wrap">
-            <div className="donut" style={{ background: `conic-gradient(${donutStops || "#e5e7eb 0 100%"})` }}>
-              <span><small>Total spent</small><strong>{currency(expenses, "AUD", true)}</strong></span>
-            </div>
-          </div>
-          <div className="category-legend">
-            {topCategories.map((item) => (
-              <button key={item.category?.id ?? "other"} onClick={() => onNavigate("transactions")}>
-                <span><i style={{ background: item.category?.color }} />{item.category?.name ?? "Other"}</span>
-                <strong>{currency(item.amount)}</strong>
-                <small>{((item.amount / spendingTotal) * 100).toFixed(0)}%</small>
-              </button>
-            ))}
-          </div>
+          {topCategories.length ? (
+            <>
+              <div className="donut-wrap">
+                <div className="donut" style={{ background: `conic-gradient(${donutStops})` }}>
+                  <span><small>Total spent</small><strong>{currency(expenses, "AUD", true)}</strong></span>
+                </div>
+              </div>
+              <div className="category-legend">
+                {topCategories.map((item) => (
+                  <button key={item.category?.id ?? "other"} onClick={() => onNavigate("transactions")}>
+                    <span><i style={{ background: item.category?.color }} />{item.category?.name ?? "Other"}</span>
+                    <strong>{currency(item.amount)}</strong>
+                    <small>{((item.amount / spendingTotal) * 100).toFixed(0)}%</small>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <EmptyState glyph="◒" title="No spending yet" detail={`Completed expenses for ${monthLabel()} will appear here.`} />
+          )}
         </article>
 
         <article className="card span-5">
           <CardHeader title="Budget pulse" detail={`${currency(budgets.remaining)} remaining across active budgets`} action={<button className="text-button" onClick={() => onNavigate("budgets")}>Manage ›</button>} />
-          <div className="budget-overview-list">
-            {data.budgets.slice(0, 5).map((budget) => {
-              const spent = spendingForBudget(data, budget);
-              const percent = budget.monthlyLimit ? (spent / budget.monthlyLimit) * 100 : 0;
-              const status = percent > 100 ? "Over" : percent > 80 ? "Watch" : "On track";
-              return (
-                <button key={budget.id} onClick={() => onEdit({ kind: "budget", mode: "edit", id: budget.id })}>
-                  <span className="budget-icon" style={{ background: `${data.categories.find((item) => item.id === budget.categoryId)?.color}20`, color: data.categories.find((item) => item.id === budget.categoryId)?.color }}>{data.categories.find((item) => item.id === budget.categoryId)?.icon}</span>
-                  <span className="budget-row-main"><span><strong>{budget.name}</strong><small className={status === "Over" ? "danger-text" : ""}>{status}</small></span><ProgressBar value={spent} max={budget.monthlyLimit} label={`${budget.name}: ${currency(spent)} of ${currency(budget.monthlyLimit)}`} color={percent > 100 ? "#e76881" : percent > 80 ? "#e2a84b" : "#28a989"} /></span>
-                  <span className="budget-values"><strong>{currency(spent)}</strong><small>of {currency(budget.monthlyLimit)}</small></span>
-                </button>
-              );
-            })}
-          </div>
+          {data.budgets.length ? (
+            <div className="budget-overview-list">
+              {data.budgets.slice(0, 5).map((budget) => {
+                const spent = spendingForBudget(data, budget);
+                const percent = budget.monthlyLimit ? (spent / budget.monthlyLimit) * 100 : 0;
+                const status = percent > 100 ? "Over" : percent > 80 ? "Watch" : "On track";
+                return (
+                  <button key={budget.id} onClick={() => onEdit({ kind: "budget", mode: "edit", id: budget.id })}>
+                    <span className="budget-icon" style={{ background: `${data.categories.find((item) => item.id === budget.categoryId)?.color}20`, color: data.categories.find((item) => item.id === budget.categoryId)?.color }}>{data.categories.find((item) => item.id === budget.categoryId)?.icon}</span>
+                    <span className="budget-row-main"><span><strong>{budget.name}</strong><small className={status === "Over" ? "danger-text" : ""}>{status}</small></span><ProgressBar value={spent} max={budget.monthlyLimit} label={`${budget.name}: ${currency(spent)} of ${currency(budget.monthlyLimit)}`} color={percent > 100 ? "#e76881" : percent > 80 ? "#e2a84b" : "#28a989"} /></span>
+                    <span className="budget-values"><strong>{currency(spent)}</strong><small>of {currency(budget.monthlyLimit)}</small></span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState glyph="◒" title="No budgets yet" detail="Create a category budget to start tracking planned versus actual spending." action={<button className="primary-button" onClick={() => onEdit({ kind: "budget", mode: "create" })}>Create budget</button>} />
+          )}
         </article>
 
         <article className="card span-7">
@@ -1045,21 +1301,11 @@ function OverviewView({
               </button>
             ))}
           </div>
-          <div className="money-flow" aria-label="Recommended money flow: salary account allocates to everyday, bills, global subscriptions and future fund accounts">
-            <span className="flow-label">Monthly money flow</span>
-            <div className="flow-track">
-              <span className="flow-node source">A<small>Salary</small></span>
-              <span className="flow-line"><i /><b>Allocate on payday</b></span>
-              <span className="flow-destinations">
-                <span>B<small>Daily</small></span><span>B+<small>Bills</small></span><span>C<small>Global</small></span><span>D<small>Future</small></span>
-              </span>
-            </div>
-          </div>
         </article>
 
         <article className="card span-4">
           <CardHeader title="Upcoming bills" detail={`${upcoming.length} due soon`} action={<button className="text-button" onClick={() => onNavigate("bills")}>Calendar ›</button>} />
-          <div className="upcoming-list">
+          {upcoming.length ? <div className="upcoming-list">
             {upcoming.map((bill) => (
               <button key={bill.id} onClick={() => onEdit({ kind: "bill", mode: "edit", id: bill.id })}>
                 <span className="bill-date"><strong>{new Date(`${bill.dueDate}T12:00:00`).getDate()}</strong><small>{new Date(`${bill.dueDate}T12:00:00`).toLocaleString("en-AU", { month: "short" })}</small></span>
@@ -1067,12 +1313,12 @@ function OverviewView({
                 <b>{currency(bill.amount)}</b>
               </button>
             ))}
-          </div>
+          </div> : <EmptyState glyph="◷" title="No upcoming bills" detail="Add a bill to keep due dates and payment reminders together." action={<button className="primary-button" onClick={() => onEdit({ kind: "bill", mode: "create" })}>Add bill</button>} />}
         </article>
 
         <article className="card span-4">
           <CardHeader title="Savings goals" detail="Building your future" action={<button className="text-button" onClick={() => onNavigate("goals")}>View goals ›</button>} />
-          <div className="goal-overview-list">
+          {data.goals.length ? <div className="goal-overview-list">
             {data.goals.slice(0, 3).map((goal) => {
               const percent = Math.min(100, (goal.currentAmount / goal.targetAmount) * 100);
               return (
@@ -1083,18 +1329,22 @@ function OverviewView({
                 </button>
               );
             })}
-          </div>
+          </div> : <EmptyState glyph="◎" title="No savings goals" detail="Create a target to track contributions and an estimated finish date." action={<button className="primary-button" onClick={() => onEdit({ kind: "goal", mode: "create" })}>Create goal</button>} />}
         </article>
 
         <article className="card span-4 ai-card">
           <span className="ai-orb">✦</span>
-          <div><span className="eyebrow">CashFlow insight</span><h3>You can bring your emergency fund goal forward by 2 months.</h3><p>Redirecting the {currency(Math.max(0, budgets.remaining))} currently left in category budgets would close the gap sooner.</p></div>
+          <div>
+            <span className="eyebrow">CashFlow insight</span>
+            <h3>{topGoal ? `${topGoal.name} is ${Math.round((topGoal.currentAmount / topGoal.targetAmount) * 100)}% funded.` : data.budgets.length ? `${currency(Math.max(0, budgets.remaining))} remains across active budgets.` : "Add a budget or goal for tailored insights."}</h3>
+            <p>{topGoal ? `${currency(Math.max(0, topGoal.targetAmount - topGoal.currentAmount))} remains to reach the target.` : "Insights are calculated only from records saved in this workspace."}</p>
+          </div>
           <button className="ai-action" onClick={onAssistant}>See the plan <span>↗</span></button>
         </article>
 
         <article className="card span-12 recent-card">
           <CardHeader title="Recent transactions" detail="Latest activity across every account" action={<button className="text-button" onClick={() => onNavigate("transactions")}>View all transactions ›</button>} />
-          <TransactionTable rows={recent} data={data} compact onEdit={(id) => onEdit({ kind: "transaction", mode: "edit", id })} />
+          {recent.length ? <TransactionTable rows={recent} data={data} compact onEdit={(id) => onEdit({ kind: "transaction", mode: "edit", id })} /> : <EmptyState glyph="↕" title="No transactions yet" detail="Record your first income or expense to begin the activity history." action={<button className="primary-button" onClick={() => onEdit({ kind: "transaction", mode: "create" })}>Add transaction</button>} />}
         </article>
       </section>
     </div>
@@ -1231,7 +1481,7 @@ function TransactionsView({
       />
 
       <section className="stat-strip">
-        <div><span>This month</span><strong>{data.transactions.filter((item) => item.date.startsWith("2026-07")).length}</strong><small>transactions</small></div>
+        <div><span>This month</span><strong>{data.transactions.filter((item) => item.date.startsWith(currentMonthKey())).length}</strong><small>transactions</small></div>
         <div><span>Income</span><strong className="positive-text">{currency(monthlyIncome(data))}</strong><small>completed</small></div>
         <div><span>Expenses</span><strong>{currency(monthlyExpenses(data))}</strong><small>completed</small></div>
         <div><span>Pending</span><strong>{data.transactions.filter((item) => item.status === "pending").length}</strong><small>to review</small></div>
@@ -1305,7 +1555,12 @@ function TransactionsView({
             }}
           />
         ) : (
-          <EmptyState glyph="⌕" title="No transactions found" detail="Try clearing a filter or add a new transaction." action={<button className="primary-button" onClick={() => onEdit({ kind: "transaction", mode: "create" })}>Add transaction</button>} />
+          <EmptyState
+            glyph={data.transactions.length ? "⌕" : "↕"}
+            title={data.transactions.length ? "No transactions match these filters" : "No transactions yet"}
+            detail={data.transactions.length ? "Clear one or more filters to broaden the results." : "Record your first income or expense. It will be saved to the backend and reflected across the dashboard."}
+            action={data.transactions.length ? <button className="secondary-button" onClick={clearFilters}>Clear filters</button> : <button className="primary-button" onClick={() => onEdit({ kind: "transaction", mode: "create" })}>Add transaction</button>}
+          />
         )}
         <div className="pagination">
           <span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
@@ -1540,7 +1795,7 @@ function BudgetsView({
       />
       <section className="plan-summary-grid">
         <article className="plan-hero">
-          <div><span>Budget remaining</span><strong className={summary.remaining < 0 ? "danger-text" : ""}>{currency(summary.remaining)}</strong><small>of {currency(summary.limit)} planned for July</small></div>
+          <div><span>Budget remaining</span><strong className={summary.remaining < 0 ? "danger-text" : ""}>{currency(summary.remaining)}</strong><small>of {currency(summary.limit)} planned for {monthLabel()}</small></div>
           <div className="large-progress"><ProgressBar value={summary.spent} max={summary.limit} color={summary.spent > summary.limit ? "#e76881" : "#28a989"} label={`Overall budgets: ${currency(summary.spent)} of ${currency(summary.limit)}`} /><span><b>{currency(summary.spent)} spent</b><small>{Math.round((summary.spent / Math.max(1, summary.limit)) * 100)}% used</small></span></div>
         </article>
         <article><span className="metric-icon positive">✓</span><div><small>On track</small><strong>{data.budgets.length - overspent.length}</strong><span>budgets</span></div></article>
@@ -1554,13 +1809,13 @@ function BudgetsView({
         </div>
       ) : null}
 
-      <section className="budget-grid">
+      {data.budgets.length ? <section className="budget-grid">
         {data.budgets.map((budget) => {
           const spent = spendingForBudget(data, budget);
           const remaining = budget.monthlyLimit - spent;
           const percent = (spent / Math.max(1, budget.monthlyLimit)) * 100;
           const category = data.categories.find((item) => item.id === budget.categoryId);
-          const forecast = spent / 26 * 31;
+          const forecast = spent / Math.max(1, new Date().getDate()) * daysInCurrentMonth();
           const tone = percent > 100 ? "danger" : percent > 80 ? "warning" : "success";
           return (
             <article className="budget-card" key={budget.id}>
@@ -1571,7 +1826,7 @@ function BudgetsView({
                   ["View details", () => onEdit({ kind: "budget", mode: "view", id: budget.id })],
                   ["Edit budget", () => onEdit({ kind: "budget", mode: "edit", id: budget.id })],
                   ["Duplicate", () => onDuplicate(budget.id)],
-                  ["Reset July", () => onReset(budget)],
+                  ["Reset cycle to day 1", () => onReset(budget)],
                   ["Delete", () => onDelete(budget), "danger"],
                 ]} />
               </div>
@@ -1584,7 +1839,7 @@ function BudgetsView({
           );
         })}
         <button className="add-account-card budget-add" onClick={() => onEdit({ kind: "budget", mode: "create" })}><span>＋</span><strong>Create a category budget</strong><small>Set monthly, weekly and daily guardrails</small></button>
-      </section>
+      </section> : <section className="card"><EmptyState glyph="◒" title="No budgets yet" detail="Create a category budget to compare planned and actual spending each month." action={<button className="primary-button" onClick={() => onEdit({ kind: "budget", mode: "create" })}>Create budget</button>} /></section>}
     </div>
   );
 }
@@ -1610,7 +1865,7 @@ function GoalsView({
         <div><span>Total saved toward goals</span><strong>{currency(totalSaved)}</strong><small>of {currency(totalTarget)} across {data.goals.length} goals</small></div>
         <div className="large-progress"><ProgressBar value={totalSaved} max={totalTarget} color="#6f74e8" label={`All goals: ${currency(totalSaved)} of ${currency(totalTarget)}`} /><span><b>{((totalSaved / Math.max(1, totalTarget)) * 100).toFixed(1)}% complete</b><small>{currency(data.goals.reduce((sum, goal) => sum + goal.monthlyContribution, 0))}/month planned</small></span></div>
       </section>
-      <section className="goals-grid">
+      {data.goals.length ? <section className="goals-grid">
         {data.goals.map((goal) => {
           const percent = Math.min(100, (goal.currentAmount / goal.targetAmount) * 100);
           const months = goalMonthsRemaining(goal.targetAmount, goal.currentAmount, goal.monthlyContribution);
@@ -1633,7 +1888,7 @@ function GoalsView({
           );
         })}
         <button className="add-account-card" onClick={() => onEdit({ kind: "goal", mode: "create" })}><span>＋</span><strong>Dream up a new goal</strong><small>Emergency fund, travel, home, car or anything else</small></button>
-      </section>
+      </section> : <section className="card"><EmptyState glyph="◎" title="No savings goals yet" detail="Create a target, deadline and monthly contribution to start tracking progress." action={<button className="primary-button" onClick={() => onEdit({ kind: "goal", mode: "create" })}>Create goal</button>} /></section>}
     </div>
   );
 }
@@ -1657,13 +1912,21 @@ function BillsView({
     .filter((bill) => tab === "all" || bill.status === tab)
     .filter((bill) => bill.name.toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  const upcomingTotal = data.bills.filter((bill) => bill.status === "upcoming").reduce((sum, bill) => sum + bill.amount, 0);
+  const dueCutoff = new Date();
+  dueCutoff.setDate(dueCutoff.getDate() + 14);
+  const dueSoon = data.bills.filter(
+    (bill) =>
+      bill.status === "upcoming" &&
+      bill.dueDate >= localDate() &&
+      bill.dueDate <= localDate(dueCutoff),
+  );
+  const upcomingTotal = dueSoon.reduce((sum, bill) => sum + bill.amount, 0);
 
   return (
     <div className="page-stack">
       <PageHeading title="Bills manager" detail="Stay ahead of every payment, reminder and recurring commitment." actions={<button className="primary-button" onClick={() => onEdit({ kind: "bill", mode: "create" })}>＋ Add bill</button>} />
       <section className="bill-summary-grid">
-        <article><span className="metric-icon warning">◷</span><div><small>Due in 14 days</small><strong>{currency(upcomingTotal)}</strong><span>{data.bills.filter((bill) => bill.status === "upcoming").length} bills</span></div></article>
+        <article><span className="metric-icon warning">◷</span><div><small>Due in 14 days</small><strong>{currency(upcomingTotal)}</strong><span>{dueSoon.length} bills</span></div></article>
         <article><span className="metric-icon danger">!</span><div><small>Overdue</small><strong>{currency(data.bills.filter((bill) => bill.status === "overdue").reduce((sum, bill) => sum + bill.amount, 0))}</strong><span>{data.bills.filter((bill) => bill.status === "overdue").length} needs action</span></div></article>
         <article><span className="metric-icon positive">✓</span><div><small>Paid this month</small><strong>{data.bills.filter((bill) => bill.status === "paid").length}</strong><span>scheduled bills</span></div></article>
         <article><span className="metric-icon neutral">↻</span><div><small>On autopay</small><strong>{data.bills.filter((bill) => bill.autopay).length}</strong><span>protected payments</span></div></article>
@@ -1694,7 +1957,7 @@ function BillsView({
               </tr>;
             })}
           </tbody></table></div>
-        ) : <EmptyState glyph="◷" title="No bills in this view" detail="Change the status filter or schedule a new bill." action={<button className="primary-button" onClick={() => onEdit({ kind: "bill", mode: "create" })}>Add bill</button>} />}
+        ) : <EmptyState glyph="◷" title={data.bills.length ? "No bills match this view" : "No bills yet"} detail={data.bills.length ? "Change the status filter or search phrase." : "Schedule your first bill to track due dates and reminders."} action={data.bills.length ? undefined : <button className="primary-button" onClick={() => onEdit({ kind: "bill", mode: "create" })}>Add bill</button>} />}
       </section>
     </div>
   );
@@ -1702,37 +1965,41 @@ function BillsView({
 
 function ReportsView({ data, onToast }: { data: FinanceData; onToast: (toast: Toast) => void }) {
   const [range, setRange] = useState<"week" | "month" | "quarter" | "year">("month");
+  const now = new Date();
+  const today = localDate(now);
+  const quarter = Math.floor(now.getMonth() / 3) + 1;
+  const slug = monthLabel(now).toLowerCase().replace(/\s+/g, "-");
   const rangeDetails = {
     week: {
-      start: "2026-07-20",
+      start: currentWeekStart(now),
       title: "Weekly financial summary",
-      detail: "20–26 July 2026",
-      exportLabel: "week-ending-2026-07-26",
+      detail: `${longDate(currentWeekStart(now))} – ${longDate(today)}`,
+      exportLabel: `week-ending-${today}`,
     },
     month: {
-      start: "2026-07-01",
-      title: "July financial summary",
-      detail: "1–26 July 2026",
-      exportLabel: "july-2026",
+      start: currentMonthStart(now),
+      title: `${monthLabel(now)} financial summary`,
+      detail: `${longDate(currentMonthStart(now))} – ${longDate(today)}`,
+      exportLabel: slug,
     },
     quarter: {
-      start: "2026-07-01",
-      title: "Q3 financial summary",
-      detail: "1–26 July 2026",
-      exportLabel: "q3-2026",
+      start: currentQuarterStart(now),
+      title: `Q${quarter} ${now.getFullYear()} financial summary`,
+      detail: `${longDate(currentQuarterStart(now))} – ${longDate(today)}`,
+      exportLabel: `q${quarter}-${now.getFullYear()}`,
     },
     year: {
-      start: "2026-01-01",
-      title: "2026 financial summary",
-      detail: "1 January–26 July 2026",
-      exportLabel: "year-to-date-2026",
+      start: currentYearStart(now),
+      title: `${now.getFullYear()} financial summary`,
+      detail: `${longDate(currentYearStart(now))} – ${longDate(today)}`,
+      exportLabel: `year-to-date-${now.getFullYear()}`,
     },
   }[range];
   const periodTransactions = data.transactions.filter(
     (transaction) =>
       transaction.status === "completed" &&
       transaction.date >= rangeDetails.start &&
-      transaction.date <= "2026-07-26",
+      transaction.date <= today,
   );
   const income = periodTransactions
     .filter((transaction) => transaction.type === "income")
@@ -1757,6 +2024,10 @@ function ReportsView({ data, onToast }: { data: FinanceData; onToast: (toast: To
     }))
     .sort((left, right) => right.amount - left.amount);
   const rate = income > 0 ? Math.max(0, ((income - expenses) / income) * 100) : 0;
+  const activityPoints = [...periodTransactions]
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .slice(-12);
+  const activityMax = Math.max(1, ...activityPoints.map((item) => item.amount));
 
   return (
     <div className="page-stack reports-page">
@@ -1773,11 +2044,11 @@ function ReportsView({ data, onToast }: { data: FinanceData; onToast: (toast: To
       />
       <div className="report-controls">
         <div className="module-tabs">{(["week", "month", "quarter", "year"] as const).map((value) => <button key={value} className={range === value ? "active" : ""} onClick={() => setRange(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
-        <button className="month-picker">◷ July 2026 ⌄</button>
+        <button className="month-picker">◷ {monthLabel(now)}</button>
       </div>
       <section className="report-title-card">
         <span><small>CashFlow OS · Personal finances</small><h1>{rangeDetails.title}</h1><p>{rangeDetails.detail} · All active accounts · AUD</p></span>
-        <StatusPill tone={income - expenses >= 0 ? "success" : "danger"}>{income - expenses >= 0 ? "Positive cash flow" : "Negative cash flow"}</StatusPill>
+        <StatusPill tone={!periodTransactions.length ? "neutral" : income - expenses >= 0 ? "success" : "danger"}>{!periodTransactions.length ? "No activity" : income - expenses >= 0 ? "Positive cash flow" : "Negative cash flow"}</StatusPill>
       </section>
       <section className="metric-grid report-metrics">
         <MetricCard glyph="▰" label="Closing balance" value={currency(balance)} trend={`${data.accounts.filter((item) => !item.archived).length}`} tone="positive" detail="active accounts" />
@@ -1787,29 +2058,29 @@ function ReportsView({ data, onToast }: { data: FinanceData; onToast: (toast: To
       </section>
       <section className="dashboard-grid">
         <article className="card span-8 report-chart-card">
-          <CardHeader title="Cash flow trend" detail="Income, expenses and retained cash" />
-          <div className="report-line-chart" role="img" aria-label={`Cash flow trend for ${rangeDetails.detail}`}>
-            {[48, 52, 50, 61, 58, 66, 64, 72, 69, 79, 77, 88].map((height, index) => <span key={index}><i style={{ height: `${height}%` }} /><small>{index % 2 === 0 ? `${index + 1} Jul` : ""}</small></span>)}
+          <CardHeader title="Transaction activity" detail="Latest completed records in this period" />
+          {activityPoints.length ? <><div className="report-line-chart" role="img" aria-label={`Transaction activity for ${rangeDetails.detail}`}>
+            {activityPoints.map((item) => <span key={item.id}><i style={{ height: `${Math.max(3, (item.amount / activityMax) * 100)}%`, background: item.type === "income" ? "#28a989" : "#6f74e8" }} /><small>{shortDate(item.date)}</small></span>)}
           </div>
-          <div className="report-callout"><span>{income - expenses >= 0 ? "↗" : "↘"}</span><p><strong>Cash flow is {currency(Math.abs(income - expenses))} {income - expenses >= 0 ? "positive" : "negative"}.</strong><br />{periodTransactions.length} completed records are included in this view.</p></div>
+          <div className="report-callout"><span>{income - expenses >= 0 ? "↗" : "↘"}</span><p><strong>Cash flow is {currency(Math.abs(income - expenses))} {income - expenses >= 0 ? "positive" : "negative"}.</strong><br />{periodTransactions.length} completed records are included in this view.</p></div></> : <EmptyState glyph="⌁" title="No report activity" detail="Completed transactions in the selected period will appear here." />}
         </article>
         <article className="card span-4">
           <CardHeader title="Category performance" detail="Largest monthly expenses" />
-          <div className="report-category-list">{categories.slice(0, 6).map((item) => <div key={item.category?.id}><span><i style={{ background: item.category?.color }} />{item.category?.name}</span><ProgressBar value={item.amount} max={categories[0]?.amount ?? 1} color={item.category?.color} label={`${item.category?.name}: ${currency(item.amount)}`} /><strong>{currency(item.amount)}</strong></div>)}</div>
+          {categories.length ? <div className="report-category-list">{categories.slice(0, 6).map((item) => <div key={item.category?.id}><span><i style={{ background: item.category?.color }} />{item.category?.name}</span><ProgressBar value={item.amount} max={categories[0]?.amount ?? 1} color={item.category?.color} label={`${item.category?.name}: ${currency(item.amount)}`} /><strong>{currency(item.amount)}</strong></div>)}</div> : <EmptyState glyph="◒" title="No expense categories" detail="Completed expenses in this period will be grouped here." />}
         </article>
         <article className="card span-6">
           <CardHeader title="Budget performance" detail="Planned vs actual" />
-          <div className="report-budget-table">{data.budgets.map((budget) => {
+          {data.budgets.length ? <div className="report-budget-table">{data.budgets.map((budget) => {
             const spent = spendingForBudget(data, budget);
             return <div key={budget.id}><span>{budget.name}</span><strong>{currency(spent)} / {currency(budget.monthlyLimit)}</strong><StatusPill tone={spent > budget.monthlyLimit ? "danger" : "success"}>{spent > budget.monthlyLimit ? "Over" : "On track"}</StatusPill></div>;
-          })}</div>
+          })}</div> : <EmptyState glyph="◒" title="No budgets to report" detail="Create a budget to compare planned and actual spending." />}
         </article>
         <article className="card span-6">
           <CardHeader title="Account balance history" detail="Current position by purpose" />
           <div className="balance-history">{data.accounts.filter((item) => !item.archived).map((account) => <div key={account.id}><span className="account-logo" style={{ background: account.color }}>{account.icon}</span><span><strong>{account.name}</strong><small>{account.bankName}</small></span><div><i style={{ width: `${Math.max(6, (account.balance / Math.max(...data.accounts.map((item) => item.balance), 1)) * 100)}%`, background: account.color }} /></div><b>{currency(account.balance)}</b></div>)}</div>
         </article>
       </section>
-      <footer className="report-footer"><span>CashFlow OS</span><p>Generated 26 July 2026 · Private financial workspace</p><span>Page 1 of 1</span></footer>
+      <footer className="report-footer"><span>CashFlow OS</span><p>Generated {reportDate(now)} · Private financial workspace</p><span>Page 1 of 1</span></footer>
     </div>
   );
 }
@@ -1874,7 +2145,7 @@ function EditorDrawer({
         type: String(form.get("type") ?? "expense"),
         categoryId: String(form.get("categoryId") ?? ""),
         accountId: String(form.get("accountId") ?? ""),
-        date: String(form.get("date") ?? "2026-07-26"),
+        date: String(form.get("date") ?? localDate()),
         time: String(form.get("time") ?? "12:00"),
         merchant: String(form.get("merchant") ?? ""),
         paymentMethod: String(form.get("paymentMethod") ?? "Debit card"),
@@ -1899,6 +2170,7 @@ function EditorDrawer({
         icon: String(form.get("icon") ?? "A"),
         notes: String(form.get("notes") ?? ""),
         archived: Boolean(source?.archived),
+        purpose: source?.purpose,
         rule: String(form.get("rule") ?? ""),
       };
     } else if (state.kind === "transfer") {
@@ -1906,7 +2178,7 @@ function EditorDrawer({
         fromAccountId: String(form.get("fromAccountId") ?? ""),
         toAccountId: String(form.get("toAccountId") ?? ""),
         amount: toNumber(form.get("amount")),
-        date: String(form.get("date") ?? "2026-07-26"),
+        date: String(form.get("date") ?? localDate()),
         notes: String(form.get("notes") ?? ""),
         status: String(form.get("status") ?? "completed"),
       };
@@ -1917,7 +2189,8 @@ function EditorDrawer({
         monthlyLimit: toNumber(form.get("monthlyLimit")),
         weeklyLimit: toNumber(form.get("weeklyLimit")),
         dailyLimit: toNumber(form.get("dailyLimit")),
-        periodStart: String(form.get("periodStart") ?? "2026-07-01"),
+        accountId: source?.accountId ?? null,
+        resetDay: toNumber(form.get("resetDay"), source?.resetDay ?? 1),
         status: String(form.get("status") ?? "active"),
       };
     } else if (state.kind === "goal") {
@@ -1929,6 +2202,7 @@ function EditorDrawer({
         monthlyContribution: toNumber(form.get("monthlyContribution")),
         notes: String(form.get("notes") ?? ""),
         color: String(form.get("color") ?? "#6f74e8"),
+        status: source?.status ?? "active",
       };
     } else {
       item = {
@@ -1941,6 +2215,7 @@ function EditorDrawer({
         frequency: String(form.get("frequency") ?? "monthly"),
         status: String(form.get("status") ?? "upcoming"),
         autopay: form.get("autopay") === "on",
+        notes: String(form.get("notes") ?? ""),
       };
     }
 
@@ -2060,7 +2335,7 @@ function TransactionFields({ initial, data, duplicate }: { initial: any; data: F
         <Field label="Description" className="span-2"><input name="description" defaultValue={defaults.description} placeholder="Optional context" maxLength={240} /></Field>
         <Field label="Account" hint={transactionType === "income" ? "Income goes to salary or custom accounts." : "Protected salary and savings accounts are excluded."} required><select name="accountId" value={accountId} onChange={(event) => setAccountId(event.target.value)} required>{compatibleAccounts.map((item) => <option key={item.id} value={item.id}>{item.name} · {currency(item.balance)}</option>)}</select></Field>
         <Field label="Category" required><select name="categoryId" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>{compatibleCategories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-        <Field label="Date" required><input name="date" type="date" defaultValue={defaults.date ?? "2026-07-26"} required /></Field>
+        <Field label="Date" required><input name="date" type="date" defaultValue={defaults.date ?? localDate()} required /></Field>
         <Field label="Time" required><input name="time" type="time" defaultValue={defaults.time ?? "12:00"} required /></Field>
       </FormSection>
       <FormSection title="Merchant & payment" detail="Useful for search, rules and spending insights.">
@@ -2132,7 +2407,7 @@ function TransferFields({ data, initial }: { data: FinanceData; initial: any }) 
         }} required>{availableAccounts.map((item) => <option key={item.id} value={item.id}>{item.name} · {currency(item.balance)}</option>)}</select></Field>
         <Field label="To account" required><select name="toAccountId" value={to} onChange={(event) => setTo(event.target.value)} required>{availableAccounts.filter((item) => item.id !== from).map((item) => <option key={item.id} value={item.id}>{item.name} · {currency(item.balance)}</option>)}</select></Field>
         <Field label="Amount" required className="amount-input span-2"><span className="currency-prefix">$</span><input name="amount" type="number" min=".01" max={fromAccount?.balance ?? undefined} step=".01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></Field>
-        <Field label="Date" required><input name="date" type="date" defaultValue={initial?.date ?? "2026-07-26"} required /></Field>
+        <Field label="Date" required><input name="date" type="date" defaultValue={initial?.date ?? localDate()} required /></Field>
         <Field label="Status"><select name="status" defaultValue={initial?.status ?? "completed"}><option value="completed">Completed</option><option value="pending">Pending</option><option value="cancelled">Cancelled</option></select></Field>
         <Field label="Notes" className="span-2"><textarea name="notes" defaultValue={initial?.notes} rows={3} placeholder="Reason for this transfer" /></Field>
       </FormSection>
@@ -2152,7 +2427,7 @@ function BudgetFields({ initial, data, duplicate }: { initial: any; data: Financ
         <Field label="Monthly limit" required className="amount-input"><span className="currency-prefix">$</span><input name="monthlyLimit" type="number" min="1" step=".01" defaultValue={defaults.monthlyLimit ?? ""} required /></Field>
         <Field label="Weekly limit" required className="amount-input"><span className="currency-prefix">$</span><input name="weeklyLimit" type="number" min="1" step=".01" defaultValue={defaults.weeklyLimit ?? ""} required /></Field>
         <Field label="Daily guide" required className="amount-input"><span className="currency-prefix">$</span><input name="dailyLimit" type="number" min="1" step=".01" defaultValue={defaults.dailyLimit ?? ""} required /></Field>
-        <Field label="Period starts" required><input name="periodStart" type="date" defaultValue={defaults.periodStart ?? "2026-07-01"} required /></Field>
+        <Field label="Monthly reset day" required><input name="resetDay" type="number" min="1" max="28" step="1" defaultValue={defaults.resetDay ?? 1} required /></Field>
       </FormSection>
       <div className="helper-card"><span>✦</span><p><strong>Smart allocation tip</strong><br />Keep flexible category budgets below 35% of take-home income so essentials and savings remain protected.</p></div>
     </div>
@@ -2167,7 +2442,7 @@ function GoalFields({ initial, duplicate }: { initial: any; duplicate: boolean }
         <Field label="Goal name" required className="span-2"><input name="name" defaultValue={duplicate ? `${defaults.name ?? ""} copy` : defaults.name} placeholder="e.g. Japan trip" required /></Field>
         <Field label="Target amount" required className="amount-input"><span className="currency-prefix">$</span><input name="targetAmount" type="number" min="1" step=".01" defaultValue={defaults.targetAmount ?? ""} required /></Field>
         <Field label="Current amount" required className="amount-input"><span className="currency-prefix">$</span><input name="currentAmount" type="number" min="0" step=".01" defaultValue={defaults.currentAmount ?? 0} required /></Field>
-        <Field label="Deadline" required><input name="deadline" type="date" defaultValue={defaults.deadline ?? "2027-12-31"} required /></Field>
+        <Field label="Deadline" required><input name="deadline" type="date" defaultValue={defaults.deadline ?? defaultGoalDeadline()} required /></Field>
         <Field label="Monthly contribution" required className="amount-input"><span className="currency-prefix">$</span><input name="monthlyContribution" type="number" min="0" step=".01" defaultValue={defaults.monthlyContribution ?? 0} required /></Field>
         <Field label="Colour"><input name="color" type="color" defaultValue={defaults.color ?? "#6f74e8"} /></Field>
         <Field label="Notes" className="span-2"><textarea name="notes" defaultValue={defaults.notes} rows={4} placeholder="Why does this goal matter?" /></Field>
@@ -2183,13 +2458,14 @@ function BillFields({ initial, data, duplicate }: { initial: any; data: FinanceD
       <FormSection title="Bill schedule" detail="Set the payment source, recurrence and reminder window.">
         <Field label="Bill name" required className="span-2"><input name="name" defaultValue={duplicate ? `${defaults.name ?? ""} copy` : defaults.name} placeholder="e.g. Internet" required /></Field>
         <Field label="Amount" required className="amount-input"><span className="currency-prefix">$</span><input name="amount" type="number" min=".01" step=".01" defaultValue={defaults.amount ?? ""} required /></Field>
-        <Field label="Due date" required><input name="dueDate" type="date" defaultValue={defaults.dueDate ?? "2026-07-31"} required /></Field>
+        <Field label="Due date" required><input name="dueDate" type="date" defaultValue={defaults.dueDate ?? localDate()} required /></Field>
         <Field label="Payment account" required><select name="accountId" defaultValue={defaults.accountId ?? data.accounts.find((item) => item.type === "Bills")?.id}>{data.accounts.filter((item) => !item.archived).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
         <Field label="Category" required><select name="categoryId" defaultValue={defaults.categoryId ?? data.categories.find((item) => item.kind === "expense")?.id}>{data.categories.filter((item) => item.kind !== "income").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
         <Field label="Frequency"><select name="frequency" defaultValue={defaults.frequency ?? "monthly"}><option value="once">Once</option><option value="weekly">Weekly</option><option value="fortnightly">Fortnightly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></Field>
         <Field label="Reminder"><select name="reminderDays" defaultValue={defaults.reminderDays ?? 3}><option value="1">1 day before</option><option value="3">3 days before</option><option value="5">5 days before</option><option value="7">7 days before</option><option value="14">14 days before</option></select></Field>
         <Field label="Status"><select name="status" defaultValue={defaults.status ?? "upcoming"}><option value="upcoming">Upcoming</option><option value="overdue">Overdue</option><option value="paid">Paid</option></select></Field>
         <label className="check-option span-2"><input type="checkbox" name="autopay" defaultChecked={Boolean(defaults.autopay)} /><span><strong>Auto-pay enabled</strong><small>The bill is automatically debited from the selected account.</small></span></label>
+        <Field label="Notes" className="span-2"><textarea name="notes" defaultValue={defaults.notes} rows={3} placeholder="Optional payment notes" /></Field>
       </FormSection>
     </div>
   );
@@ -2235,6 +2511,7 @@ function AssistantPanel({ data, onClose }: { data: FinanceData; onClose: () => v
   const categories = categorySpending(data);
   const [answer, setAnswer] = useState<{ question: string; body: string } | null>(null);
   const available = Math.max(0, monthlyIncome(data) - monthlyExpenses(data));
+  const hasTransactions = data.transactions.length > 0;
   const prompts = [
     {
       question: "Where did I spend most this month?",
@@ -2264,14 +2541,14 @@ function AssistantPanel({ data, onClose }: { data: FinanceData; onClose: () => v
       <aside className="assistant-panel" role="dialog" aria-modal="true" aria-labelledby="assistant-title">
         <div className="assistant-header"><span className="ai-orb">✦</span><div><span className="eyebrow">Private workspace intelligence</span><h2 id="assistant-title">CashFlow Assistant</h2></div><button className="close-button" onClick={onClose} aria-label="Close assistant">×</button></div>
         <div className="assistant-body">
-          <div className="assistant-intro"><span>✦</span><p><strong>Good morning.</strong><br />I can explain patterns in the records shown in this workspace. I don’t move money or provide financial advice.</p></div>
-          <span className="section-mini-label">Suggested questions</span>
+          <div className="assistant-intro"><span>✦</span><p><strong>Hello.</strong><br />I can explain patterns in the records shown in this workspace. I don’t move money or provide financial advice.</p></div>
+          {hasTransactions ? <><span className="section-mini-label">Suggested questions</span>
           <div className="prompt-list">{prompts.map((prompt) => <button key={prompt.question} onClick={() => setAnswer(prompt)}>{prompt.question}<span>›</span></button>)}</div>
-          {answer ? <div className="assistant-answer" aria-live="polite"><span className="ai-orb small">✦</span><div><strong>{answer.question}</strong><p>{answer.body}</p><small>Based on completed July transactions, active budgets and current balances.</small></div></div> : null}
+          {answer ? <div className="assistant-answer" aria-live="polite"><span className="ai-orb small">✦</span><div><strong>{answer.question}</strong><p>{answer.body}</p><small>Based on completed {monthLabel()} transactions, active budgets and current balances.</small></div></div> : null}
           <div className="assistant-insight-stack">
             <div><span className="positive-text">↗</span><p><strong>{savingsRate(data).toFixed(1)}% savings rate</strong><small>Healthy month-to-date position</small></p></div>
             <div><span className="warning-text">!</span><p><strong>{data.bills.filter((bill) => bill.status !== "paid").length} bills ahead</strong><small>{currency(data.bills.filter((bill) => bill.status !== "paid").reduce((sum, bill) => sum + bill.amount, 0))} scheduled</small></p></div>
-          </div>
+          </div></> : <EmptyState glyph="✦" title="Add financial activity first" detail="The assistant will use your saved transactions, budgets, bills and balances without substituting sample data." />}
         </div>
         <div className="assistant-input"><input aria-label="Ask a financial question" placeholder="Ask about your finances…" /><button aria-label="Send question">↑</button></div>
       </aside>
@@ -2280,18 +2557,21 @@ function AssistantPanel({ data, onClose }: { data: FinanceData; onClose: () => v
 }
 
 function NotificationsPanel({ data, onClose }: { data: FinanceData; onClose: () => void }) {
+  const cashFlow = monthlyIncome(data) - monthlyExpenses(data);
   const alerts = [
     ...data.bills.filter((bill) => bill.status === "overdue").map((bill) => ({ glyph: "!", tone: "danger", title: `${bill.name} is overdue`, detail: `${currency(bill.amount)} was due ${shortDate(bill.dueDate)}.` })),
     ...data.budgets.filter((budget) => spendingForBudget(data, budget) > budget.monthlyLimit).map((budget) => ({ glyph: "◒", tone: "warning", title: `${budget.name} budget exceeded`, detail: `${currency(spendingForBudget(data, budget) - budget.monthlyLimit)} over the monthly limit.` })),
     ...data.goals.filter((goal) => goal.currentAmount / goal.targetAmount > .9).map((goal) => ({ glyph: "◎", tone: "success", title: `${goal.name} is nearly complete`, detail: `${currency(goal.targetAmount - goal.currentAmount)} left to reach the target.` })),
-    { glyph: "↗", tone: "success", title: "Healthy cash-flow month", detail: `Income is ${currency(monthlyIncome(data) - monthlyExpenses(data))} ahead of expenses.` },
+    ...(monthlyIncome(data) > 0 && cashFlow > 0
+      ? [{ glyph: "↗", tone: "success", title: "Positive cash-flow month", detail: `Income is ${currency(cashFlow)} ahead of expenses.` }]
+      : []),
   ];
   return (
     <div className="popover-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="notification-panel" role="dialog" aria-modal="true" aria-labelledby="notifications-title">
         <div className="panel-header"><div><h2 id="notifications-title">Notifications</h2><p>{alerts.length} financial updates</p></div><button className="close-button" onClick={onClose} aria-label="Close notifications">×</button></div>
         <button className="mark-read">Mark all as read</button>
-        <div className="notification-list">{alerts.map((alert, index) => <div key={`${alert.title}-${index}`}><span className={`metric-icon ${alert.tone}`}>{alert.glyph}</span><p><strong>{alert.title}</strong><small>{alert.detail}</small><em>{index < 2 ? "Today" : "This week"}</em></p><i /></div>)}</div>
+        <div className="notification-list">{alerts.length ? alerts.map((alert, index) => <div key={`${alert.title}-${index}`}><span className={`metric-icon ${alert.tone}`}>{alert.glyph}</span><p><strong>{alert.title}</strong><small>{alert.detail}</small><em>{index < 2 ? "Today" : "This week"}</em></p><i /></div>) : <EmptyState glyph="✓" title="You’re all caught up" detail="Bill, budget and goal alerts will appear here." />}</div>
       </aside>
     </div>
   );
@@ -2428,7 +2708,7 @@ function csvCell(value: string | number) {
 function downloadTransactionsCsv(
   data: FinanceData,
   transactions = data.transactions,
-  exportLabel = "july-2026",
+  exportLabel = currentMonthKey(),
 ) {
   const headers = ["Date", "Time", "Title", "Description", "Type", "Amount AUD", "Category", "Account", "Merchant", "Payment method", "Status", "Tags", "Notes"];
   const rows = sortedTransactions(transactions, "newest").map((transaction) => [
@@ -2462,9 +2742,9 @@ function downloadExcel(
   data: FinanceData,
   transactions = data.transactions,
   report = {
-    title: "July financial summary",
-    detail: "1–26 July 2026",
-    exportLabel: "july-2026",
+    title: `${monthLabel()} financial summary`,
+    detail: `${longDate(currentMonthStart())} – ${longDate(localDate())}`,
+    exportLabel: currentMonthKey(),
   },
 ) {
   const completed = transactions.filter((transaction) => transaction.status === "completed");
