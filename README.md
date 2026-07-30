@@ -41,3 +41,8 @@ the authenticated workspace identity headers supplied by OpenAI Sites; local
 development uses a dedicated local identity. Financial records are stored in
 D1, receipts are stored in R2, and no demo accounts, transactions, budgets,
 goals, bills, or balances are inserted.
+
+The production command intentionally uses Vite/vinext rather than `next build`.
+That build emits the Cloudflare Worker and packages `.openai/hosting.json` plus
+the D1 migrations under `dist/.openai`, allowing Sites to provision the `DB`
+and `RECEIPTS` bindings and apply the database schema during deployment.
