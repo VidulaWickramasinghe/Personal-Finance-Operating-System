@@ -4,6 +4,39 @@ function pad(value: number) {
   return String(value).padStart(2, "0");
 }
 
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const;
+
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
+
+function dateParts(value: Date) {
+  return {
+    day: value.getDate(),
+    month: value.getMonth(),
+    year: value.getFullYear(),
+  };
+}
+
 export function localDate(value = new Date()) {
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
@@ -33,26 +66,18 @@ export function currentWeekStart(value = new Date()) {
 }
 
 export function monthLabel(value = new Date()) {
-  return new Intl.DateTimeFormat("en-AU", {
-    month: "long",
-    year: "numeric",
-  }).format(value);
+  const { month, year } = dateParts(value);
+  return `${MONTH_NAMES[month]} ${year}`;
 }
 
 export function headingDate(value = new Date()) {
-  return new Intl.DateTimeFormat("en-AU", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(value);
+  const { day, month } = dateParts(value);
+  return `${WEEKDAY_NAMES[value.getDay()]}, ${day} ${MONTH_NAMES[month]}`;
 }
 
 export function reportDate(value = new Date()) {
-  return new Intl.DateTimeFormat("en-AU", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(value);
+  const { day, month, year } = dateParts(value);
+  return `${day} ${MONTH_NAMES[month]} ${year}`;
 }
 
 export function daysInCurrentMonth(value = new Date()) {
@@ -69,18 +94,17 @@ export function currency(value: number, code = "AUD", compact = false) {
 }
 
 export function shortDate(value: string) {
-  return new Intl.DateTimeFormat("en-AU", {
-    day: "numeric",
-    month: "short",
-  }).format(new Date(`${value}T12:00:00`));
+  const parsed = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const { day, month } = dateParts(parsed);
+  return `${day} ${MONTH_NAMES[month].slice(0, 3)}`;
 }
 
 export function longDate(value: string) {
-  return new Intl.DateTimeFormat("en-AU", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(new Date(`${value}T12:00:00`));
+  const parsed = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const { day, month, year } = dateParts(parsed);
+  return `${day} ${MONTH_NAMES[month]} ${year}`;
 }
 
 export function completedMonthTransactions(data: FinanceData) {
