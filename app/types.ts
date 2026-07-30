@@ -1,6 +1,6 @@
 export type TransactionType = "income" | "expense";
 export type TransactionStatus = "pending" | "completed" | "cancelled";
-export type BillStatus = "upcoming" | "paid" | "overdue";
+export type BillStatus = "upcoming" | "paid" | "overdue" | "cancelled";
 
 export type Account = {
   id: string;
@@ -43,6 +43,8 @@ export type Transaction = {
   receiptName?: string;
   receiptKey?: string;
   receiptUrl?: string;
+  receiptContentType?: string;
+  receiptSize?: number;
   location: string;
   recurring: boolean;
   status: TransactionStatus;
@@ -107,7 +109,17 @@ export type Activity = {
   createdAt: string;
 };
 
+export type FinancePreferences = {
+  defaultCurrency: string;
+  timezone: "Australia/Melbourne" | "Australia/Sydney" | "Australia/Perth";
+  language: "en-AU" | "en-US";
+  billReminders: boolean;
+  budgetAlerts: boolean;
+  largeTransactionAlerts: boolean;
+};
+
 export type FinanceData = {
+  preferences: FinancePreferences;
   accounts: Account[];
   categories: Category[];
   transactions: Transaction[];
