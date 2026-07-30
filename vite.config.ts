@@ -17,8 +17,8 @@ export default defineConfig(async () => {
 
   return {
     server: {
-      host: "0.0.0.0",
-      allowedHosts: ["terminal.local"],
+      // Codespaces exposes the local server through a per-workspace HTTPS host.
+      allowedHosts: [".app.github.dev"],
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),

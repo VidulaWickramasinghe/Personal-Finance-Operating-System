@@ -614,10 +614,9 @@ function identityFromRequest(request: Request) {
     url.hostname === "localhost" ||
     url.hostname === "127.0.0.1" ||
     url.hostname === "::1" ||
-    url.hostname === "[::1]";
-  const isDevelopment = process.env.NODE_ENV !== "production";
-  const email =
-    emailHeader || (isLocal || isDevelopment ? "local@cashflow.local" : "");
+    url.hostname === "[::1]" ||
+    url.hostname.endsWith(".app.github.dev");
+  const email = emailHeader || (isLocal ? "local@cashflow.local" : "");
   if (!email) return null;
 
   const encodedName = request.headers.get(NAME_HEADER);

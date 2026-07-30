@@ -400,8 +400,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetch("/api/finance", { cache: "no-store" });
+      const response = await fetch("/api/finance", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!response.ok) {
         const failure = await response
           .json()
@@ -415,12 +420,15 @@ export default function CashflowApp({ userName }: { userName: string }) {
       return true;
     } catch (error) {
       setLoadError(
-        error instanceof Error
+        error instanceof DOMException && error.name === "AbortError"
+          ? "Finance storage took too long to respond. Check the development server and try again."
+          : error instanceof Error
           ? error.message
           : "Could not load your finance data.",
       );
       return false;
     } finally {
+      window.clearTimeout(timeout);
       setIsLoading(false);
     }
   }, []);

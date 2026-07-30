@@ -46,10 +46,22 @@ test("finance records are loaded from and saved to backend APIs", async () => {
     "utf8",
   );
 
-  assert.match(app, /fetch\("\/api\/finance", \{ cache: "no-store" \}\)/);
+  assert.match(app, /const controller = new AbortController\(\)/);
+  assert.match(app, /signal: controller\.signal/);
+  assert.match(app, /controller\.abort\(\)/);
   assert.match(app, /method: editingId \? "PATCH" : "POST"/);
   assert.match(app, /await loadData\(true\)/);
   assert.doesNotMatch(app, /const optimistic/);
+});
+
+test("forwarded Codespaces previews use the isolated local identity", async () => {
+  const [finance, vite] = await Promise.all([
+    readFile(new URL("../db/finance.ts", import.meta.url), "utf8"),
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(finance, /url\.hostname\.endsWith\("\.app\.github\.dev"\)/);
+  assert.match(vite, /allowedHosts: \["\.app\.github\.dev"\]/);
 });
 
 test("workspace initialization removes demo finance rows and keeps only required catalogue data", async () => {
