@@ -32,11 +32,11 @@ pnpm run lint
 pnpm run build
 ```
 
-`pnpm run dev` applies all pending D1 migrations to the project-local database
-before starting vinext, so a fresh checkout can use the finance API immediately.
-To apply them without starting the app, run `pnpm run dev:prepare`.
-The API also verifies and initializes its schema at runtime, so starting vinext
-directly does not leave `/api/finance` returning a storage `503`.
+GitHub Codespaces forwards only port `3000`. The other ephemeral sockets are
+internal Workers runtime/debugger channels and are ignored by the checked-in
+dev-container configuration. Rebuild the container once after pulling this
+change. The Vite server also explicitly permits the forwarded HTTPS origin so
+browser modules and hot reload do not fail CORS checks.
 
 Generate a new D1 migration after changing `db/schema.ts`:
 
@@ -50,7 +50,8 @@ development uses a dedicated local identity. Financial records are stored in
 D1, receipts are stored in R2, and no demo accounts, transactions, budgets,
 goals, bills, or balances are inserted.
 
-The production command intentionally uses Vite/vinext rather than `next build`.
-That build emits the Cloudflare Worker and packages `.openai/hosting.json` plus
-the D1 migrations under `dist/.openai`, allowing Sites to provision the `DB`
-and `RECEIPTS` bindings and apply the database schema during deployment.
+Vercel builds use the standard Next.js output and a build-time Cloudflare
+module shim. The UI deploys successfully there, but persistent finance APIs
+still require the `DB` and `RECEIPTS` bindings supplied by OpenAI Sites or
+Cloudflare Workers; the app reports that storage is unavailable rather than
+substituting unsafe in-memory data.

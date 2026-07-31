@@ -17,8 +17,17 @@ export default defineConfig(async () => {
 
   return {
     server: {
-      // Codespaces exposes the local server through a per-workspace HTTPS host.
       allowedHosts: [".app.github.dev"],
+      cors: {
+        origin: [
+          /^https:\/\/[-a-z0-9]+-3000\.app\.github\.dev$/,
+          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/,
+        ],
+      },
+      strictPort: true,
+      hmr: process.env.CODESPACES
+        ? { protocol: "wss", clientPort: 443 }
+        : undefined,
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),
