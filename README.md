@@ -30,6 +30,12 @@ pnpm run lint
 pnpm run build
 ```
 
+GitHub Codespaces forwards only port `3000`. The other ephemeral sockets are
+internal Workers runtime/debugger channels and are ignored by the checked-in
+dev-container configuration. Rebuild the container once after pulling this
+change. The Vite server also explicitly permits the forwarded HTTPS origin so
+browser modules and hot reload do not fail CORS checks.
+
 Generate a new D1 migration after changing `db/schema.ts`:
 
 ```bash
@@ -41,3 +47,27 @@ the authenticated workspace identity headers supplied by OpenAI Sites; local
 development uses a dedicated local identity. Financial records are stored in
 D1, receipts are stored in R2, and no demo accounts, transactions, budgets,
 goals, bills, or balances are inserted.
+
+Vercel builds use the standard Next.js output and a build-time Cloudflare
+module shim. The UI deploys successfully there, but persistent finance APIs
+still require the `DB` and `RECEIPTS` bindings supplied by OpenAI Sites or
+Cloudflare Workers; the app reports that storage is unavailable rather than
+substituting unsafe in-memory data.
+
+### Vercel project settings
+
+The repository uses Vercel's current Next.js framework detection rather than
+the legacy `builds` API. The install command activates pnpm 10 through Corepack
+before reading the v9-format lockfile. In the Vercel project, set **Root
+Directory** to `.` (the repository root) and disable overrides for Build
+Command, Install Command, and Output Directory so `vercel.json` remains
+authoritative. A successful deployment runs the Corepack install, `next build`,
+and exposes `/api/health`; a build with no install output means the Vercel
+project is still targeting the wrong Root Directory or has Skip Build enabled.
+
+Finance data is never migrated or cleared by a Vercel build. The existing D1
+and R2 data remains in the backend used by the Cloudflare deployment.
+Set the Vercel environment variable `FINANCE_BACKEND_URL` to the origin of that
+private Cloudflare/OpenAI Sites deployment (without a trailing slash). Next.js
+then proxies every `/api/finance/*` request to the existing D1/R2 backend, so
+Vercel uses the same saved records instead of creating or replacing data.
