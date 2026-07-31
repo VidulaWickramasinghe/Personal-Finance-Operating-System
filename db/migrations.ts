@@ -1,5 +1,6 @@
 import initialSchema from "../drizzle/0000_short_loki.sql?raw";
 import workspaceUpgrade from "../drizzle/0001_broad_big_bertha.sql?raw";
+import preferencesUpgrade from "../drizzle/0002_ambitious_randall_flagg.sql?raw";
 import { getD1Binding } from ".";
 
 let initialization: Promise<void> | undefined;
@@ -36,6 +37,9 @@ async function initializeFinanceStorage() {
   const names = new Set(columns.results.map((column) => column.name));
   if (!names.has("workspace_version")) {
     await executeMigration(d1, workspaceUpgrade);
+  }
+  if (!names.has("timezone")) {
+    await executeMigration(d1, preferencesUpgrade);
   }
 }
 

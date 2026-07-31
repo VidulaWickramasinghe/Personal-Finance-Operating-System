@@ -60,6 +60,16 @@ type ConfirmState = {
   id: string;
   label: string;
 } | null;
+type Preferences = {
+  defaultCurrency: string;
+  timezone: string;
+  language: string;
+  theme: "light" | "dark" | "system";
+  billReminders: boolean;
+  budgetAlerts: boolean;
+  largeTransactionAlerts: boolean;
+};
+const DEFAULT_PREFERENCES: Preferences = { defaultCurrency: "AUD", timezone: "Australia/Melbourne", language: "en-AU", theme: "system", billReminders: true, budgetAlerts: true, largeTransactionAlerts: true };
 
 const NAV_ITEMS: { id: ModuleId; label: string; glyph: string }[] = [
   { id: "overview", label: "Overview", glyph: "⌂" },
@@ -384,9 +394,11 @@ function payloadForApi(kind: ResourceKind, value: any) {
 export default function CashflowApp({
   userName,
   initialData,
+  initialPreferences,
 }: {
   userName: string;
   initialData?: unknown;
+  initialPreferences?: Partial<Preferences>;
 }) {
   const hasInitialData = initialData !== undefined;
   const [data, setData] = useState<FinanceData>(() =>
@@ -401,6 +413,7 @@ export default function CashflowApp({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [preferences, setPreferences] = useState<Preferences>({ ...DEFAULT_PREFERENCES, ...initialPreferences });
   const [commandOpen, setCommandOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -628,13 +641,13 @@ export default function CashflowApp({
   const duplicateResource = (kind: Exclude<ResourceKind, "transfer">, id: string) =>
     setEditor({ kind, mode: "duplicate", id });
 
-  const savePreferences = useCallback(() => {
+  const savePreferences = useCallback(async (next: Preferences) => {
+    const response = await fetch("/api/finance/preferences", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+    if (!response.ok) throw new Error("Unable to save workspace preferences.");
+    setPreferences(next);
+    if (next.theme !== "system") setTheme(next.theme);
     setSettingsOpen(false);
-    setToast({
-      title: "Preferences saved",
-      detail: "Your appearance preference is saved on this device.",
-      tone: "success",
-    });
+    setToast({ title: "Preferences saved", detail: "Your private workspace settings are stored securely.", tone: "success" });
   }, []);
 
   const activeLabel = NAV_ITEMS.find((item) => item.id === active)?.label ?? "Overview";
@@ -914,12 +927,11 @@ export default function CashflowApp({
       {settingsOpen ? (
         <SettingsPanel
           userName={userName}
-          preferences={data.preferences}
-          theme={theme}
           onTheme={setTheme}
           onSave={savePreferences}
           onClose={() => setSettingsOpen(false)}
           onSavePreferences={savePreferences}
+          preferences={preferences}
         />
       ) : null}
       {toast ? <ToastMessage toast={toast} onClose={() => setToast(null)} /> : null}
@@ -2620,34 +2632,23 @@ function NotificationsPanel({ data, onClose }: { data: FinanceData; onClose: () 
 
 function SettingsPanel({
   userName,
-  preferences,
-  theme,
   onTheme,
   onSave,
   onClose,
   onSavePreferences,
+  preferences,
 }: {
   userName: string;
-  preferences: FinancePreferences;
-  theme: "light" | "dark";
   onTheme: (theme: "light" | "dark") => void;
   onSave: (preferences: FinancePreferences) => Promise<boolean>;
   onClose: () => void;
-  onSavePreferences: () => void;
+  onSavePreferences: (preferences: Preferences) => Promise<void>;
+  preferences: Preferences;
 }) {
   const [draft, setDraft] = useState(preferences);
   const [saving, setSaving] = useState(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      await onSave(draft);
-    } finally {
-      setSaving(false);
-    }
-  }
-
+  const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const save = () => { setSaving(true); void onSavePreferences(draft).catch(() => setSaving(false)); };
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -2655,21 +2656,21 @@ function SettingsPanel({
         <div className="settings-body">
           <section className="profile-card"><span>WA</span><div><strong>{userName}</strong><small>Private CashFlow OS workspace</small></div><StatusPill tone="success">Secure</StatusPill></section>
           <FormSection title="Regional settings">
-            <Field label="Currency"><select defaultValue="AUD"><option>AUD · Australian dollar</option><option>USD · US dollar</option><option>NZD · New Zealand dollar</option></select></Field>
-            <Field label="Timezone"><select defaultValue="Australia/Melbourne"><option>Australia/Melbourne</option><option>Australia/Sydney</option><option>Australia/Perth</option></select></Field>
-            <Field label="Language"><select defaultValue="English (Australia)"><option>English (Australia)</option><option>English (United States)</option></select></Field>
+            <Field label="Currency"><select value={draft.defaultCurrency} onChange={(e) => update("defaultCurrency", e.target.value)}><option value="AUD">AUD · Australian dollar</option><option value="USD">USD · US dollar</option><option value="NZD">NZD · New Zealand dollar</option><option value="EUR">EUR · Euro</option><option value="GBP">GBP · British pound</option><option value="JPY">JPY · Japanese yen</option></select></Field>
+            <Field label="Timezone"><select value={draft.timezone} onChange={(e) => update("timezone", e.target.value)}><option>Australia/Melbourne</option><option>Australia/Sydney</option><option>Australia/Perth</option><option>UTC</option></select></Field>
+            <Field label="Language"><select value={draft.language} onChange={(e) => update("language", e.target.value)}><option value="en-AU">English (Australia)</option><option value="en-US">English (United States)</option></select></Field>
           </FormSection>
           <FormSection title="Appearance">
-            <div className="theme-picker span-2"><button className={theme === "light" ? "active" : ""} onClick={() => onTheme("light")}><span>☀</span><strong>Light</strong><small>Bright and focused</small></button><button className={theme === "dark" ? "active" : ""} onClick={() => onTheme("dark")}><span>☾</span><strong>Dark</strong><small>Low-light comfort</small></button></div>
+            <div className="theme-picker span-2"><button className={draft.theme === "light" ? "active" : ""} onClick={() => { update("theme", "light"); onTheme("light"); }}><span>☀</span><strong>Light</strong><small>Bright and focused</small></button><button className={draft.theme === "dark" ? "active" : ""} onClick={() => { update("theme", "dark"); onTheme("dark"); }}><span>☾</span><strong>Dark</strong><small>Low-light comfort</small></button></div>
           </FormSection>
           <FormSection title="Notifications">
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Bill reminders</strong><small>Upcoming and overdue payments</small></span></label>
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Budget alerts</strong><small>80% and overspending thresholds</small></span></label>
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Large transaction alerts</strong><small>Unusual account movements</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.billReminders} onChange={(e) => update("billReminders", e.target.checked)} /><span><strong>Bill reminders</strong><small>Upcoming and overdue payments</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.budgetAlerts} onChange={(e) => update("budgetAlerts", e.target.checked)} /><span><strong>Budget alerts</strong><small>80% and overspending thresholds</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.largeTransactionAlerts} onChange={(e) => update("largeTransactionAlerts", e.target.checked)} /><span><strong>Large transaction alerts</strong><small>Unusual account movements</small></span></label>
           </FormSection>
           <div className="security-settings"><span>⌾</span><div><strong>Private deployment protection</strong><p>Access is restricted to your account. Financial records are isolated by owner and encrypted in transit.</p></div></div>
         </div>
-        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={onSavePreferences}>Save preferences</button></div>
+        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save preferences"}</button></div>
       </aside>
     </div>
   );

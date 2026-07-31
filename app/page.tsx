@@ -17,5 +17,5 @@ export default async function Home() {
   const financeUser = await getFinanceUser(request);
   const initialData = await loadFinanceSnapshot(financeUser.id);
 
-  return <CashflowApp userName={displayName} initialData={initialData} />;
+  return <CashflowApp userName={displayName} initialData={initialData} initialPreferences={financeUser} />;
 }

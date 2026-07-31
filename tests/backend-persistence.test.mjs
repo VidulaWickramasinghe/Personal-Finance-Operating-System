@@ -74,9 +74,10 @@ test("settings save handler is defined and wired into the preferences panel", as
     "utf8",
   );
 
-  assert.match(app, /const savePreferences = useCallback\(\(\) =>/);
+  assert.match(app, /const savePreferences = useCallback\(async \(next: Preferences\) =>/);
   assert.match(app, /onSavePreferences=\{savePreferences\}/);
-  assert.match(app, /onClick=\{onSavePreferences\}>Save preferences/);
+  assert.match(app, /fetch\("\/api\/finance\/preferences"/);
+  assert.match(app, /onClick=\{save\}>\{saving \? "Saving…" : "Save preferences"\}/);
   assert.match(app, /function SettingsPanel\(\{[\s\S]*?onSavePreferences,[\s\S]*?\}: \{/);
   assert.doesNotMatch(app, /onSavePreferences,\s*onSavePreferences,/);
 });

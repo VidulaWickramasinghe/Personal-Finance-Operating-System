@@ -48,4 +48,7 @@ test("packages backend bindings and D1 migrations with the deployed worker", asy
   await access(
     new URL("../dist/.openai/drizzle/0001_broad_big_bertha.sql", import.meta.url),
   );
+  await access(
+    new URL("../dist/.openai/drizzle/0002_ambitious_randall_flagg.sql", import.meta.url),
+  );
 });
