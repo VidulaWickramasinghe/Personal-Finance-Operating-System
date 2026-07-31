@@ -14,6 +14,8 @@ exportable reports.
 - Budget alerts, goal projections, financial-health indicators, reports, and
   CSV, Excel-compatible, and print/PDF exports
 - Owner-scoped D1 persistence and private R2 receipt storage
+- Cross-device regional and notification preferences stored with the workspace
+- Receipt names, types, sizes, and object keys linked to their transactions
 - Clean first-run onboarding with no fabricated balances or financial activity
 - An idempotent system category catalogue for income, expenses, bills, and budgets
 - Responsive light/dark interface with keyboard shortcuts and accessible
