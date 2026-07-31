@@ -31,3 +31,24 @@ test("ships product metadata and removes the temporary starter preview", async (
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   await access(new URL("../public/og.png", import.meta.url));
 });
+
+test("packages backend bindings and D1 migrations with the deployed worker", async () => {
+  const hosting = JSON.parse(
+    await readFile(
+      new URL("../dist/.openai/hosting.json", import.meta.url),
+      "utf8",
+    ),
+  );
+
+  assert.equal(hosting.d1, "DB");
+  assert.equal(hosting.r2, "RECEIPTS");
+  await access(
+    new URL("../dist/.openai/drizzle/0000_short_loki.sql", import.meta.url),
+  );
+  await access(
+    new URL("../dist/.openai/drizzle/0001_broad_big_bertha.sql", import.meta.url),
+  );
+  await access(
+    new URL("../dist/.openai/drizzle/0002_ambitious_randall_flagg.sql", import.meta.url),
+  );
+});

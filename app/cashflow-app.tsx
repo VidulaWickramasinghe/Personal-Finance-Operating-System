@@ -59,6 +59,16 @@ type ConfirmState = {
   id: string;
   label: string;
 } | null;
+type Preferences = {
+  defaultCurrency: string;
+  timezone: string;
+  language: string;
+  theme: "light" | "dark" | "system";
+  billReminders: boolean;
+  budgetAlerts: boolean;
+  largeTransactionAlerts: boolean;
+};
+const DEFAULT_PREFERENCES: Preferences = { defaultCurrency: "AUD", timezone: "Australia/Melbourne", language: "en-AU", theme: "system", billReminders: true, budgetAlerts: true, largeTransactionAlerts: true };
 
 const NAV_ITEMS: { id: ModuleId; label: string; glyph: string }[] = [
   { id: "overview", label: "Overview", glyph: "⌂" },
@@ -98,10 +108,6 @@ const EMPTY_FINANCE_DATA: FinanceData = {
   bills: [],
   activity: [],
 };
-
-function uniqueId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
 
 function toNumber(value: FormDataEntryValue | null, fallback = 0) {
   const parsed = Number(value);
@@ -361,17 +367,29 @@ function payloadForApi(kind: ResourceKind, value: any) {
   return value;
 }
 
-export default function CashflowApp({ userName }: { userName: string }) {
-  const [data, setData] = useState<FinanceData>(EMPTY_FINANCE_DATA);
+export default function CashflowApp({
+  userName,
+  initialData,
+  initialPreferences,
+}: {
+  userName: string;
+  initialData?: unknown;
+  initialPreferences?: Partial<Preferences>;
+}) {
+  const hasInitialData = initialData !== undefined;
+  const [data, setData] = useState<FinanceData>(() =>
+    hasInitialData ? normalizeFinance(initialData) : EMPTY_FINANCE_DATA,
+  );
   const [active, setActive] = useState<ModuleId>("overview");
   const [editor, setEditor] = useState<EditorState>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedData, setHasLoadedData] = useState(false);
+  const [isLoading, setIsLoading] = useState(!hasInitialData);
+  const [hasLoadedData, setHasLoadedData] = useState(hasInitialData);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [preferences, setPreferences] = useState<Preferences>({ ...DEFAULT_PREFERENCES, ...initialPreferences });
   const [commandOpen, setCommandOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -380,8 +398,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetch("/api/finance", { cache: "no-store" });
+      const response = await fetch("/api/finance", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!response.ok) {
         const failure = await response
           .json()
@@ -395,20 +418,23 @@ export default function CashflowApp({ userName }: { userName: string }) {
       return true;
     } catch (error) {
       setLoadError(
-        error instanceof Error
+        error instanceof DOMException && error.name === "AbortError"
+          ? "Finance storage took too long to respond. Check the development server and try again."
+          : error instanceof Error
           ? error.message
           : "Could not load your finance data.",
       );
       return false;
     } finally {
+      window.clearTimeout(timeout);
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const task = window.setTimeout(() => void loadData(), 0);
+    const task = window.setTimeout(() => void loadData(hasInitialData), 0);
     return () => window.clearTimeout(task);
-  }, [loadData]);
+  }, [hasInitialData, loadData]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("cashflow-theme");
@@ -486,37 +512,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
   const saveResource = useCallback(
     async (kind: ResourceKind, item: any, editingId?: string) => {
       const resource = API_RESOURCE[kind];
-      const snapshot = data;
-      const id = editingId ?? item.id ?? uniqueId(kind.slice(0, 3));
-      const optimistic = { ...item, id };
-
-      if (kind === "transfer" && !editingId) {
-        const transfer = optimistic as Transfer;
-        setData((current) => ({
-          ...current,
-          transfers: [transfer, ...current.transfers],
-          accounts: current.accounts.map((account) => {
-            if (transfer.status !== "completed") return account;
-            if (account.id === transfer.fromAccountId) {
-              return { ...account, balance: account.balance - transfer.amount };
-            }
-            if (account.id === transfer.toAccountId) {
-              return { ...account, balance: account.balance + transfer.amount };
-            }
-            return account;
-          }),
-        }));
-      } else {
-        const listKey = RESOURCE_LIST[kind];
-        setData((current) => {
-          const list = current[listKey] as any[];
-          const nextList = editingId
-            ? list.map((existing) => (existing.id === editingId ? optimistic : existing))
-            : [optimistic, ...list];
-          return { ...current, [listKey]: nextList };
-        });
-      }
-
       setEditor(null);
       setIsSyncing(true);
       try {
@@ -525,7 +520,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
           {
             method: editingId ? "PATCH" : "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payloadForApi(kind, { ...item, id })),
+            body: JSON.stringify(payloadForApi(kind, { ...item })),
           },
         );
         if (!response.ok) {
@@ -543,7 +538,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
           tone: refreshed ? "success" : "info",
         });
       } catch (error) {
-        setData(snapshot);
         setToast({
           title: "Change not saved",
           detail: error instanceof Error ? error.message : "Please try again.",
@@ -553,18 +547,12 @@ export default function CashflowApp({ userName }: { userName: string }) {
         setIsSyncing(false);
       }
     },
-    [data, loadData],
+    [loadData],
   );
 
   const deleteResource = useCallback(async () => {
     if (!confirm) return;
     const { kind, id, label } = confirm;
-    const snapshot = data;
-    const listKey = RESOURCE_LIST[kind];
-    setData((current) => ({
-      ...current,
-      [listKey]: (current[listKey] as any[]).filter((item) => item.id !== id),
-    }));
     setConfirm(null);
     setIsSyncing(true);
     try {
@@ -586,7 +574,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
         tone: refreshed ? "success" : "info",
       });
     } catch (error) {
-      setData(snapshot);
       setToast({
         title: "Delete failed",
         detail: error instanceof Error ? error.message : "Please try again.",
@@ -595,17 +582,10 @@ export default function CashflowApp({ userName }: { userName: string }) {
     } finally {
       setIsSyncing(false);
     }
-  }, [confirm, data, loadData]);
+  }, [confirm, loadData]);
 
   const markBillPaid = useCallback(
     async (bill: Bill) => {
-      const snapshot = data;
-      setData((current) => ({
-        ...current,
-        bills: current.bills.map((item) =>
-          item.id === bill.id ? { ...item, status: "paid" } : item,
-        ),
-      }));
       setIsSyncing(true);
       try {
         const response = await fetch(`/api/finance/bills/${bill.id}/pay`, {
@@ -621,7 +601,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
           tone: refreshed ? "success" : "info",
         });
       } catch (error) {
-        setData(snapshot);
         setToast({
           title: "Payment update failed",
           detail: error instanceof Error ? error.message : "Please try again.",
@@ -631,11 +610,20 @@ export default function CashflowApp({ userName }: { userName: string }) {
         setIsSyncing(false);
       }
     },
-    [data, loadData],
+    [loadData],
   );
 
   const duplicateResource = (kind: Exclude<ResourceKind, "transfer">, id: string) =>
     setEditor({ kind, mode: "duplicate", id });
+
+  const savePreferences = useCallback(async (next: Preferences) => {
+    const response = await fetch("/api/finance/preferences", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+    if (!response.ok) throw new Error("Unable to save workspace preferences.");
+    setPreferences(next);
+    if (next.theme !== "system") setTheme(next.theme);
+    setSettingsOpen(false);
+    setToast({ title: "Preferences saved", detail: "Your private workspace settings are stored securely.", tone: "success" });
+  }, []);
 
   const activeLabel = NAV_ITEMS.find((item) => item.id === active)?.label ?? "Overview";
   const overdueCount = data.bills.filter((bill) => bill.status === "overdue").length;
@@ -759,19 +747,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
               }
               onDuplicate={(id) => duplicateResource("transaction", id)}
               onBulkDelete={async (ids) => {
-                const snapshot = data;
-                setData((current) => ({
-                  ...current,
-                  transactions: current.transactions.filter((item) => !ids.includes(item.id)),
-                }));
                 const response = await fetch("/api/finance/transactions/bulk", {
                   method: "DELETE",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ ids }),
                 });
                 if (!response.ok) {
-                  setData(snapshot);
-                  setToast({ title: "Bulk delete failed", detail: "Your records were restored.", tone: "danger" });
+                  setToast({ title: "Bulk delete failed", detail: "No records were removed from the dashboard.", tone: "danger" });
                   return;
                 }
                 const refreshed = await loadData(true);
@@ -920,9 +902,10 @@ export default function CashflowApp({ userName }: { userName: string }) {
       {settingsOpen ? (
         <SettingsPanel
           userName={userName}
-          theme={theme}
           onTheme={setTheme}
           onClose={() => setSettingsOpen(false)}
+          onSavePreferences={savePreferences}
+          preferences={preferences}
         />
       ) : null}
       {toast ? <ToastMessage toast={toast} onClose={() => setToast(null)} /> : null}
@@ -2579,15 +2562,21 @@ function NotificationsPanel({ data, onClose }: { data: FinanceData; onClose: () 
 
 function SettingsPanel({
   userName,
-  theme,
   onTheme,
   onClose,
+  onSavePreferences,
+  preferences,
 }: {
   userName: string;
-  theme: "light" | "dark";
   onTheme: (theme: "light" | "dark") => void;
   onClose: () => void;
+  onSavePreferences: (preferences: Preferences) => Promise<void>;
+  preferences: Preferences;
 }) {
+  const [draft, setDraft] = useState(preferences);
+  const [saving, setSaving] = useState(false);
+  const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const save = () => { setSaving(true); void onSavePreferences(draft).catch(() => setSaving(false)); };
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -2595,21 +2584,21 @@ function SettingsPanel({
         <div className="settings-body">
           <section className="profile-card"><span>WA</span><div><strong>{userName}</strong><small>Private CashFlow OS workspace</small></div><StatusPill tone="success">Secure</StatusPill></section>
           <FormSection title="Regional settings">
-            <Field label="Currency"><select defaultValue="AUD"><option>AUD · Australian dollar</option><option>USD · US dollar</option><option>NZD · New Zealand dollar</option></select></Field>
-            <Field label="Timezone"><select defaultValue="Australia/Melbourne"><option>Australia/Melbourne</option><option>Australia/Sydney</option><option>Australia/Perth</option></select></Field>
-            <Field label="Language"><select defaultValue="English (Australia)"><option>English (Australia)</option><option>English (United States)</option></select></Field>
+            <Field label="Currency"><select value={draft.defaultCurrency} onChange={(e) => update("defaultCurrency", e.target.value)}><option value="AUD">AUD · Australian dollar</option><option value="USD">USD · US dollar</option><option value="NZD">NZD · New Zealand dollar</option><option value="EUR">EUR · Euro</option><option value="GBP">GBP · British pound</option><option value="JPY">JPY · Japanese yen</option></select></Field>
+            <Field label="Timezone"><select value={draft.timezone} onChange={(e) => update("timezone", e.target.value)}><option>Australia/Melbourne</option><option>Australia/Sydney</option><option>Australia/Perth</option><option>UTC</option></select></Field>
+            <Field label="Language"><select value={draft.language} onChange={(e) => update("language", e.target.value)}><option value="en-AU">English (Australia)</option><option value="en-US">English (United States)</option></select></Field>
           </FormSection>
           <FormSection title="Appearance">
-            <div className="theme-picker span-2"><button className={theme === "light" ? "active" : ""} onClick={() => onTheme("light")}><span>☀</span><strong>Light</strong><small>Bright and focused</small></button><button className={theme === "dark" ? "active" : ""} onClick={() => onTheme("dark")}><span>☾</span><strong>Dark</strong><small>Low-light comfort</small></button></div>
+            <div className="theme-picker span-2"><button className={draft.theme === "light" ? "active" : ""} onClick={() => { update("theme", "light"); onTheme("light"); }}><span>☀</span><strong>Light</strong><small>Bright and focused</small></button><button className={draft.theme === "dark" ? "active" : ""} onClick={() => { update("theme", "dark"); onTheme("dark"); }}><span>☾</span><strong>Dark</strong><small>Low-light comfort</small></button></div>
           </FormSection>
           <FormSection title="Notifications">
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Bill reminders</strong><small>Upcoming and overdue payments</small></span></label>
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Budget alerts</strong><small>80% and overspending thresholds</small></span></label>
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Large transaction alerts</strong><small>Unusual account movements</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.billReminders} onChange={(e) => update("billReminders", e.target.checked)} /><span><strong>Bill reminders</strong><small>Upcoming and overdue payments</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.budgetAlerts} onChange={(e) => update("budgetAlerts", e.target.checked)} /><span><strong>Budget alerts</strong><small>80% and overspending thresholds</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.largeTransactionAlerts} onChange={(e) => update("largeTransactionAlerts", e.target.checked)} /><span><strong>Large transaction alerts</strong><small>Unusual account movements</small></span></label>
           </FormSection>
           <div className="security-settings"><span>⌾</span><div><strong>Private deployment protection</strong><p>Access is restricted to your account. Financial records are isolated by owner and encrypted in transit.</p></div></div>
         </div>
-        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={onClose}>Save preferences</button></div>
+        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save preferences"}</button></div>
       </aside>
     </div>
   );
