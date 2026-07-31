@@ -41,6 +41,30 @@ export const users = sqliteTable(
   ],
 );
 
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    timezone: text("timezone").notNull().default("Australia/Melbourne"),
+    language: text("language").notNull().default("en-AU"),
+    billReminders: integer("bill_reminders", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    budgetAlerts: integer("budget_alerts", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    largeTransactionAlerts: integer("large_transaction_alerts", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(true),
+    createdAt: text("created_at").notNull().default(now),
+    updatedAt: text("updated_at").notNull().default(now),
+  },
+);
+
 export const accounts = sqliteTable(
   "accounts",
   {
@@ -130,6 +154,10 @@ export const transactions = sqliteTable(
     tagsJson: text("tags_json").notNull().default("[]"),
     notes: text("notes").notNull().default(""),
     receiptUrl: text("receipt_url"),
+    receiptKey: text("receipt_key"),
+    receiptName: text("receipt_name"),
+    receiptContentType: text("receipt_content_type"),
+    receiptSize: integer("receipt_size"),
     location: text("location"),
     isRecurring: integer("is_recurring", { mode: "boolean" })
       .notNull()
@@ -340,7 +368,8 @@ export const activity = sqliteTable(
   ],
 );
 
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ many, one }) => ({
+  preferences: one(userPreferences),
   accounts: many(accounts),
   categories: many(categories),
   transactions: many(transactions),
@@ -350,6 +379,16 @@ export const usersRelations = relations(users, ({ many }) => ({
   bills: many(bills),
   activity: many(activity),
 }));
+
+export const userPreferencesRelations = relations(
+  userPreferences,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [userPreferences.userId],
+      references: [users.id],
+    }),
+  }),
+);
 
 export const accountsRelations = relations(accounts, ({ one, many }) => ({
   user: one(users, { fields: [accounts.userId], references: [users.id] }),

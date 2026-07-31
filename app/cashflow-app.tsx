@@ -46,6 +46,7 @@ import type {
   Budget,
   EditorState,
   FinanceData,
+  FinancePreferences,
   Goal,
   ModuleId,
   ResourceKind,
@@ -104,6 +105,14 @@ const API_RESOURCE: Record<ResourceKind, string> = {
 };
 
 const EMPTY_FINANCE_DATA: FinanceData = {
+  preferences: {
+    defaultCurrency: "AUD",
+    timezone: "Australia/Melbourne",
+    language: "en-AU",
+    billReminders: true,
+    budgetAlerts: true,
+    largeTransactionAlerts: true,
+  },
   accounts: [],
   categories: [],
   transactions: [],
@@ -188,6 +197,18 @@ function normalizeFinance(raw: any): FinanceData {
   }
 
   return {
+    preferences: {
+      defaultCurrency:
+        source.preferences?.defaultCurrency ??
+        source.user?.defaultCurrency ??
+        "AUD",
+      timezone: source.preferences?.timezone ?? "Australia/Melbourne",
+      language: source.preferences?.language ?? "en-AU",
+      billReminders: source.preferences?.billReminders ?? true,
+      budgetAlerts: source.preferences?.budgetAlerts ?? true,
+      largeTransactionAlerts:
+        source.preferences?.largeTransactionAlerts ?? true,
+    },
     accounts: source.accounts.map((item: any) => ({
       id: String(item.id),
       name: item.name ?? item.accountName ?? "Account",
@@ -270,6 +291,9 @@ function normalizeFinance(raw: any): FinanceData {
       receiptName: item.receiptName ?? (item.receiptUrl ? "Saved receipt" : undefined),
       receiptKey: item.receiptKey ?? undefined,
       receiptUrl: item.receiptUrl ?? undefined,
+      receiptContentType: item.receiptContentType ?? undefined,
+      receiptSize:
+        typeof item.receiptSize === "number" ? item.receiptSize : undefined,
       location: item.location ?? "",
       recurring: Boolean(item.recurring ?? item.isRecurring),
       status: item.status ?? "completed",
@@ -536,6 +560,7 @@ export default function CashflowApp({
           throw new Error(failure?.error ?? "Unable to save this record.");
         }
         const refreshed = await loadData(true);
+        setEditor(null);
         setToast({
           title: `${kind[0].toUpperCase()}${kind.slice(1)} ${editingId ? "updated" : "created"}`,
           detail: refreshed
@@ -910,6 +935,7 @@ export default function CashflowApp({
         <SettingsPanel
           userName={preferences.displayName || userName}
           onTheme={setTheme}
+          onSave={savePreferences}
           onClose={() => setSettingsOpen(false)}
           onSavePreferences={savePreferences}
           preferences={preferences}
@@ -2090,6 +2116,7 @@ function EditorDrawer({
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const readOnly = state.mode === "view";
   const source = (data[RESOURCE_LIST[state.kind]] as any[]).find(
     (item) => item.id === state.id,
@@ -2101,10 +2128,13 @@ function EditorDrawer({
     event.preventDefault();
     if (readOnly) return;
     setSubmitting(true);
+    setFormError(null);
     const form = new FormData(event.currentTarget);
-    let receiptName = source?.receiptName;
-    let receiptKey = source?.receiptKey;
-    let receiptUrl = source?.receiptUrl;
+    let receiptName = duplicate ? undefined : source?.receiptName;
+    let receiptKey = duplicate ? undefined : source?.receiptKey;
+    let receiptUrl = duplicate ? undefined : source?.receiptUrl;
+    let receiptContentType = duplicate ? undefined : source?.receiptContentType;
+    let receiptSize = duplicate ? undefined : source?.receiptSize;
 
     const receipt = form.get("receipt");
     if (state.kind === "transaction" && receipt instanceof File && receipt.size > 0) {
@@ -2113,7 +2143,16 @@ function EditorDrawer({
         const upload = new FormData();
         upload.set("file", receipt);
         const response = await fetch("/api/finance/receipts", { method: "POST", body: upload });
-        if (!response.ok) throw new Error("Receipt upload failed.");
+        if (!response.ok) {
+          const failure = await response.json().catch(() => null) as {
+            error?: { message?: string } | string;
+          } | null;
+          const message =
+            typeof failure?.error === "string"
+              ? failure.error
+              : failure?.error?.message;
+          throw new Error(message ?? "Receipt upload failed.");
+        }
         const payload = await response.json() as {
           item?: any;
           receipt?: any;
@@ -2122,7 +2161,20 @@ function EditorDrawer({
         const saved = payload.item ?? payload.receipt ?? payload;
         receiptName = saved.filename ?? saved.name ?? receipt.name;
         receiptKey = saved.key;
-        receiptUrl = saved.url ?? saved.receiptUrl ?? (saved.key ? `/api/finance/receipts/${encodeURIComponent(saved.key)}` : undefined);
+        receiptUrl = saved.key
+          ? `/api/finance/receipts/${encodeURIComponent(saved.key)}`
+          : saved.url ?? saved.receiptUrl;
+        receiptContentType = saved.contentType ?? receipt.type;
+        receiptSize =
+          typeof saved.size === "number" ? saved.size : receipt.size;
+      } catch (error) {
+        setFormError(
+          error instanceof Error
+            ? error.message
+            : "The receipt could not be uploaded.",
+        );
+        setSubmitting(false);
+        return;
       } finally {
         setUploading(false);
       }
@@ -2146,6 +2198,8 @@ function EditorDrawer({
         receiptName,
         receiptKey,
         receiptUrl,
+        receiptContentType,
+        receiptSize,
         location: String(form.get("location") ?? ""),
         recurring: form.get("recurring") === "on",
         status: String(form.get("status") ?? "completed"),
@@ -2221,8 +2275,15 @@ function EditorDrawer({
   const initial = duplicate && source
     ? {
         ...source,
-        name: source.name ? `${source.name} copy` : source.name,
-        title: source.title ? `${source.title} copy` : source.title,
+        ...(state.kind === "transaction"
+          ? {
+              receiptName: undefined,
+              receiptKey: undefined,
+              receiptUrl: undefined,
+              receiptContentType: undefined,
+              receiptSize: undefined,
+            }
+          : {}),
       }
     : source;
 
@@ -2238,12 +2299,13 @@ function EditorDrawer({
         <form onSubmit={submit}>
           <fieldset disabled={readOnly || submitting}>
             {state.kind === "transaction" ? <TransactionFields initial={initial} data={data} duplicate={duplicate} /> : null}
-            {state.kind === "account" ? <AccountFields initial={initial} duplicate={duplicate} /> : null}
+            {state.kind === "account" ? <AccountFields initial={initial} duplicate={duplicate} defaultCurrency={data.preferences.defaultCurrency} /> : null}
             {state.kind === "transfer" ? <TransferFields data={data} initial={initial} /> : null}
             {state.kind === "budget" ? <BudgetFields initial={initial} data={data} duplicate={duplicate} /> : null}
             {state.kind === "goal" ? <GoalFields initial={initial} duplicate={duplicate} /> : null}
             {state.kind === "bill" ? <BillFields initial={initial} data={data} duplicate={duplicate} /> : null}
           </fieldset>
+          {formError ? <div className="form-error drawer-form-error" role="alert">{formError}</div> : null}
           <div className="drawer-footer">
             <button type="button" className="secondary-button" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</button>
             {readOnly ? null : <button type="submit" className="primary-button" disabled={submitting || uploading}>{uploading ? "Uploading receipt…" : submitting ? "Saving…" : state.mode === "edit" ? "Save changes" : state.mode === "duplicate" ? "Create copy" : `Create ${state.kind}`}</button>}
@@ -2335,7 +2397,7 @@ function TransactionFields({ initial, data, duplicate }: { initial: any; data: F
         <Field label="Payment method"><select name="paymentMethod" defaultValue={defaults.paymentMethod ?? "Debit card"}><option>Debit card</option><option>Credit card</option><option>Apple Pay</option><option>Google Pay</option><option>Bank transfer</option><option>Direct debit</option><option>Cash</option><option>Other</option></select></Field>
         <Field label="Tags" hint="Separate tags with commas" className="span-2"><input name="tags" defaultValue={defaults.tags?.join(", ")} placeholder="essential, home, recurring" /></Field>
         <Field label="Location"><input name="location" defaultValue={defaults.location} placeholder="Optional suburb or place" /></Field>
-        <Field label="Receipt" hint={defaults.receiptName ? `Current: ${defaults.receiptName}` : "PDF, PNG or JPEG up to 10 MB"}><input name="receipt" type="file" accept=".pdf,image/png,image/jpeg,image/webp" /></Field>
+        <Field label="Receipt" hint={defaults.receiptName ? `Current: ${defaults.receiptName}` : "PDF or image up to 8 MB"}><input name="receipt" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif" /></Field>
         <Field label="Notes" className="span-2"><textarea name="notes" defaultValue={defaults.notes} placeholder="Add private notes…" rows={3} /></Field>
         <label className="check-option span-2"><input type="checkbox" name="recurring" defaultChecked={Boolean(defaults.recurring)} /><span><strong>Recurring transaction</strong><small>Use this as a repeat pattern for future entries.</small></span></label>
       </FormSection>
@@ -2343,7 +2405,15 @@ function TransactionFields({ initial, data, duplicate }: { initial: any; data: F
   );
 }
 
-function AccountFields({ initial, duplicate }: { initial: any; duplicate: boolean }) {
+function AccountFields({
+  initial,
+  duplicate,
+  defaultCurrency,
+}: {
+  initial: any;
+  duplicate: boolean;
+  defaultCurrency: string;
+}) {
   const defaults = initial ?? {};
   return (
     <div className="drawer-body">
@@ -2353,7 +2423,7 @@ function AccountFields({ initial, duplicate }: { initial: any; duplicate: boolea
         <Field label="Account type" required><select name="accountType" defaultValue={defaults.type ?? "Transaction"}><option>Salary</option><option>Transaction</option><option>Bills</option><option>Savings</option><option>International</option><option>Credit card</option><option>Loan</option><option>Investment</option><option>Cash</option></select></Field>
         <Field label="Current balance" required className="amount-input"><span className="currency-prefix">$</span><input name="balance" type="number" step=".01" defaultValue={defaults.balance ?? 0} required /></Field>
         <Field label="Opening balance" required className="amount-input"><span className="currency-prefix">$</span><input name="openingBalance" type="number" step=".01" defaultValue={defaults.openingBalance ?? defaults.balance ?? 0} required /></Field>
-        <Field label="Currency"><select name="currency" defaultValue={defaults.currency ?? "AUD"}><option>AUD</option><option>USD</option><option>NZD</option><option>EUR</option><option>GBP</option><option>JPY</option></select></Field>
+        <Field label="Currency"><select name="currency" defaultValue={defaults.currency ?? defaultCurrency}><option>AUD</option><option>USD</option><option>NZD</option><option>EUR</option><option>GBP</option><option>JPY</option></select></Field>
         <Field label="Account rule"><input name="rule" defaultValue={defaults.rule} placeholder="e.g. Daily spending only" /></Field>
       </FormSection>
       <FormSection title="Appearance & notes">
@@ -2572,12 +2642,14 @@ function NotificationsPanel({ data, onClose }: { data: FinanceData; onClose: () 
 function SettingsPanel({
   userName,
   onTheme,
+  onSave,
   onClose,
   onSavePreferences,
   preferences,
 }: {
   userName: string;
   onTheme: (theme: "light" | "dark") => void;
+  onSave: (preferences: FinancePreferences) => Promise<boolean>;
   onClose: () => void;
   onSavePreferences: (preferences: Preferences) => Promise<void>;
   preferences: Preferences;
