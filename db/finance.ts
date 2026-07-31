@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { getD1Binding, getDb } from ".";
+import { ensureFinanceStorage } from "./migrations";
 import {
   accounts,
   activity,
@@ -9,6 +10,7 @@ import {
   goals,
   transactions,
   transfers,
+  userPreferences,
   users,
 } from "./schema";
 
@@ -16,7 +18,10 @@ const EMAIL_HEADER = "oai-authenticated-user-email";
 const NAME_HEADER = "oai-authenticated-user-full-name";
 const NAME_ENCODING_HEADER = "oai-authenticated-user-full-name-encoding";
 
-export const CURRENT_WORKSPACE_VERSION = 1;
+// Version 2 deliberately re-runs the legacy-demo cleanup for workspaces that
+// were already opened while the original showcase data was present. It also
+// restores the required category catalogue without inserting financial data.
+export const CURRENT_WORKSPACE_VERSION = 2;
 
 type SystemCategory = {
   slug: string;
@@ -124,6 +129,7 @@ export async function getFinanceUser(request: Request): Promise<FinanceUser> {
   const identity = identityFromRequest(request);
   if (!identity) throw new FinanceAuthError();
 
+  await ensureFinanceStorage();
   const db = getDb();
   await db
     .insert(users)
@@ -147,7 +153,16 @@ export async function getFinanceUser(request: Request): Promise<FinanceUser> {
     .limit(1);
 
   if (!user) throw new Error("Unable to create or load the finance profile.");
-  return initializeFinanceWorkspace(user);
+  const initialized = await initializeFinanceWorkspace(user);
+  await ensureUserPreferences(initialized.id);
+  return initialized;
+}
+
+async function ensureUserPreferences(userId: string) {
+  await getDb()
+    .insert(userPreferences)
+    .values({ userId })
+    .onConflictDoNothing({ target: userPreferences.userId });
 }
 
 export async function initializeFinanceWorkspace(
@@ -368,6 +383,8 @@ export async function loadFinanceSnapshot(userId: string) {
     goalRows,
     billRows,
     activityRows,
+    preferenceRows,
+    profileRows,
   ] = await Promise.all([
     db
       .select()
@@ -410,6 +427,16 @@ export async function loadFinanceSnapshot(userId: string) {
       .where(eq(activity.userId, userId))
       .orderBy(desc(activity.createdAt))
       .limit(40),
+    db
+      .select()
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1),
+    db
+      .select({ defaultCurrency: users.defaultCurrency })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1),
   ]);
 
   const monthlyTransactions = transactionRows.filter(
@@ -481,6 +508,15 @@ export async function loadFinanceSnapshot(userId: string) {
     }, {});
 
   return {
+    preferences: {
+      defaultCurrency: profileRows[0]?.defaultCurrency ?? "AUD",
+      timezone: preferenceRows[0]?.timezone ?? "Australia/Melbourne",
+      language: preferenceRows[0]?.language ?? "en-AU",
+      billReminders: preferenceRows[0]?.billReminders ?? true,
+      budgetAlerts: preferenceRows[0]?.budgetAlerts ?? true,
+      largeTransactionAlerts:
+        preferenceRows[0]?.largeTransactionAlerts ?? true,
+    },
     summary: {
       totalBalanceCents,
       monthlyIncomeCents,
@@ -578,7 +614,8 @@ function identityFromRequest(request: Request) {
     url.hostname === "localhost" ||
     url.hostname === "127.0.0.1" ||
     url.hostname === "::1" ||
-    url.hostname === "[::1]";
+    url.hostname === "[::1]" ||
+    url.hostname.endsWith(".app.github.dev");
   const email = emailHeader || (isLocal ? "local@cashflow.local" : "");
   if (!email) return null;
 
