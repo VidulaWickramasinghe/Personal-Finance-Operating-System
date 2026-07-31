@@ -61,6 +61,7 @@ type ConfirmState = {
   label: string;
 } | null;
 type Preferences = {
+  displayName: string;
   defaultCurrency: string;
   timezone: string;
   language: string;
@@ -68,8 +69,12 @@ type Preferences = {
   billReminders: boolean;
   budgetAlerts: boolean;
   largeTransactionAlerts: boolean;
+  dashboardDensity: "comfortable" | "compact";
+  startPage: ModuleId;
+  showHealthScore: boolean;
+  showUpcomingBills: boolean;
 };
-const DEFAULT_PREFERENCES: Preferences = { defaultCurrency: "AUD", timezone: "Australia/Melbourne", language: "en-AU", theme: "system", billReminders: true, budgetAlerts: true, largeTransactionAlerts: true };
+const DEFAULT_PREFERENCES: Preferences = { displayName: "", defaultCurrency: "AUD", timezone: "Australia/Melbourne", language: "en-AU", theme: "system", billReminders: true, budgetAlerts: true, largeTransactionAlerts: true, dashboardDensity: "comfortable", startPage: "overview", showHealthScore: true, showUpcomingBills: true };
 
 const NAV_ITEMS: { id: ModuleId; label: string; glyph: string }[] = [
   { id: "overview", label: "Overview", glyph: "⌂" },
@@ -404,7 +409,8 @@ export default function CashflowApp({
   const [data, setData] = useState<FinanceData>(() =>
     hasInitialData ? normalizeFinance(initialData) : EMPTY_FINANCE_DATA,
   );
-  const [active, setActive] = useState<ModuleId>("overview");
+  const seededPreferences = { ...DEFAULT_PREFERENCES, displayName: userName, ...initialPreferences };
+  const [active, setActive] = useState<ModuleId>(seededPreferences.startPage);
   const [editor, setEditor] = useState<EditorState>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -413,7 +419,7 @@ export default function CashflowApp({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [preferences, setPreferences] = useState<Preferences>({ ...DEFAULT_PREFERENCES, ...initialPreferences });
+  const [preferences, setPreferences] = useState<Preferences>(seededPreferences);
   const [commandOpen, setCommandOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -655,7 +661,7 @@ export default function CashflowApp({
   const blockingLoadError = Boolean(loadError && !hasLoadedData);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell density-${preferences.dashboardDensity}`}>
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="sidebar" aria-label="Primary navigation">
         <div className="brand">
@@ -760,6 +766,7 @@ export default function CashflowApp({
               onNavigate={setActive}
               onEdit={openEditor}
               onAssistant={() => setAssistantOpen(true)}
+              preferences={preferences}
             />
           ) : null}
           {!isLoading && !blockingLoadError && active === "transactions" ? (
@@ -926,7 +933,7 @@ export default function CashflowApp({
       ) : null}
       {settingsOpen ? (
         <SettingsPanel
-          userName={userName}
+          userName={preferences.displayName || userName}
           onTheme={setTheme}
           onSave={savePreferences}
           onClose={() => setSettingsOpen(false)}
@@ -1057,12 +1064,14 @@ function OverviewView({
   onNavigate,
   onEdit,
   onAssistant,
+  preferences,
 }: {
   data: FinanceData;
   userName: string;
   onNavigate: (module: ModuleId) => void;
   onEdit: (state: EditorState) => void;
   onAssistant: () => void;
+  preferences: Preferences;
 }) {
   if (!data.accounts.length) {
     return (
@@ -1196,7 +1205,7 @@ function OverviewView({
             />
           ))}
         </div>
-        <div className="health-block">
+        {preferences.showHealthScore ? <div className="health-block">
           <div className="health-ring" style={{ "--score": `${score * 3.6}deg` } as React.CSSProperties}>
             <span><strong>{hasMonthlyActivity ? score : "—"}</strong><small>{hasMonthlyActivity ? "/ 100" : "Add data"}</small></span>
           </div>
@@ -1206,7 +1215,7 @@ function OverviewView({
             <small>{hasMonthlyActivity ? "Based on cash flow, budgets and bills" : "Add this month’s income and expenses"}</small>
           </div>
           <button aria-label="View health details">›</button>
-        </div>
+        </div> : null}
       </section>
 
       <section className="metric-grid" aria-label="Monthly metrics">
@@ -1220,7 +1229,7 @@ function OverviewView({
         <button onClick={() => onNavigate("budgets")}><span className="metric-icon neutral">◒</span><span><small>Budget remaining</small><strong>{currency(budgets.remaining)}</strong></span><b>›</b></button>
         <button onClick={() => onNavigate("goals")}><span className="metric-icon positive">◎</span><span><small>Long-term savings</small><strong>{currency(savingsBalance)}</strong></span><b>›</b></button>
         <button onClick={() => onNavigate("accounts")}><span className="metric-icon danger">↓</span><span><small>Debt balance</small><strong>{currency(debtBalance)}</strong></span><b>›</b></button>
-        <button onClick={() => onNavigate("bills")}><span className="metric-icon warning">◷</span><span><small>Upcoming bills</small><strong>{currency(upcomingBillTotal)}</strong></span><b>›</b></button>
+        {preferences.showUpcomingBills ? <button onClick={() => onNavigate("bills")}><span className="metric-icon warning">◷</span><span><small>Upcoming bills</small><strong>{currency(upcomingBillTotal)}</strong></span><b>›</b></button> : null}
       </section>
 
       <section className="dashboard-grid">
@@ -1312,7 +1321,7 @@ function OverviewView({
           </div>
         </article>
 
-        <article className="card span-4">
+        {preferences.showUpcomingBills ? <article className="card span-4">
           <CardHeader title="Upcoming bills" detail={`${upcoming.length} due soon`} action={<button className="text-button" onClick={() => onNavigate("bills")}>Calendar ›</button>} />
           {upcoming.length ? <div className="upcoming-list">
             {upcoming.map((bill) => (
@@ -1323,7 +1332,7 @@ function OverviewView({
               </button>
             ))}
           </div> : <EmptyState glyph="◷" title="No upcoming bills" detail="Add a bill to keep due dates and payment reminders together." action={<button className="primary-button" onClick={() => onEdit({ kind: "bill", mode: "create" })}>Add bill</button>} />}
-        </article>
+        </article> : null}
 
         <article className="card span-4">
           <CardHeader title="Savings goals" detail="Building your future" action={<button className="text-button" onClick={() => onNavigate("goals")}>View goals ›</button>} />
@@ -2655,6 +2664,9 @@ function SettingsPanel({
         <div className="drawer-header"><div><span className="eyebrow">Workspace preferences</span><h2 id="settings-title">Settings</h2></div><button className="close-button" onClick={onClose} aria-label="Close settings">×</button></div>
         <div className="settings-body">
           <section className="profile-card"><span>WA</span><div><strong>{userName}</strong><small>Private CashFlow OS workspace</small></div><StatusPill tone="success">Secure</StatusPill></section>
+          <FormSection title="Personal account">
+            <Field label="Display name" className="span-2"><input value={draft.displayName} maxLength={80} onChange={(e) => update("displayName", e.target.value)} placeholder="Your name" /></Field>
+          </FormSection>
           <FormSection title="Regional settings">
             <Field label="Currency"><select value={draft.defaultCurrency} onChange={(e) => update("defaultCurrency", e.target.value)}><option value="AUD">AUD · Australian dollar</option><option value="USD">USD · US dollar</option><option value="NZD">NZD · New Zealand dollar</option><option value="EUR">EUR · Euro</option><option value="GBP">GBP · British pound</option><option value="JPY">JPY · Japanese yen</option></select></Field>
             <Field label="Timezone"><select value={draft.timezone} onChange={(e) => update("timezone", e.target.value)}><option>Australia/Melbourne</option><option>Australia/Sydney</option><option>Australia/Perth</option><option>UTC</option></select></Field>
@@ -2667,6 +2679,12 @@ function SettingsPanel({
             <label className="check-option span-2"><input type="checkbox" checked={draft.billReminders} onChange={(e) => update("billReminders", e.target.checked)} /><span><strong>Bill reminders</strong><small>Upcoming and overdue payments</small></span></label>
             <label className="check-option span-2"><input type="checkbox" checked={draft.budgetAlerts} onChange={(e) => update("budgetAlerts", e.target.checked)} /><span><strong>Budget alerts</strong><small>80% and overspending thresholds</small></span></label>
             <label className="check-option span-2"><input type="checkbox" checked={draft.largeTransactionAlerts} onChange={(e) => update("largeTransactionAlerts", e.target.checked)} /><span><strong>Large transaction alerts</strong><small>Unusual account movements</small></span></label>
+          </FormSection>
+          <FormSection title="Dashboard customisation">
+            <Field label="Start page"><select value={draft.startPage} onChange={(e) => update("startPage", e.target.value as ModuleId)}>{NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
+            <Field label="Layout density"><select value={draft.dashboardDensity} onChange={(e) => update("dashboardDensity", e.target.value as Preferences["dashboardDensity"])}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></Field>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.showHealthScore} onChange={(e) => update("showHealthScore", e.target.checked)} /><span><strong>Financial health score</strong><small>Show the dashboard health indicator.</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.showUpcomingBills} onChange={(e) => update("showUpcomingBills", e.target.checked)} /><span><strong>Upcoming bills</strong><small>Show bill reminders on the overview.</small></span></label>
           </FormSection>
           <div className="security-settings"><span>⌾</span><div><strong>Private deployment protection</strong><p>Access is restricted to your account. Financial records are isolated by owner and encrypted in transit.</p></div></div>
         </div>

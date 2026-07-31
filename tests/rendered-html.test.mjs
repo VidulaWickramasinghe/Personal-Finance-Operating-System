@@ -51,4 +51,7 @@ test("packages backend bindings and D1 migrations with the deployed worker", asy
   await access(
     new URL("../dist/.openai/drizzle/0002_ambitious_randall_flagg.sql", import.meta.url),
   );
+  await access(
+    new URL("../dist/.openai/drizzle/0003_naive_texas_twister.sql", import.meta.url),
+  );
 });

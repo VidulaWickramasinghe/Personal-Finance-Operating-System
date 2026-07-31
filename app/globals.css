@@ -3223,6 +3223,20 @@ input[type="radio"] {
   padding: 0 22px 30px;
 }
 
+.density-compact .main-content {
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.density-compact .page-stack,
+.density-compact .dashboard-grid {
+  gap: 10px;
+}
+
+.density-compact .card {
+  padding: 14px;
+}
+
 .drawer-footer {
   min-height: 70px;
   display: flex;
