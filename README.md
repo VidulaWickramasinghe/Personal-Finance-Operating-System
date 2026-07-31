@@ -58,12 +58,13 @@ substituting unsafe in-memory data.
 
 ### Vercel project settings
 
-The repository includes an explicit `@vercel/next` builder so a deployment
-cannot succeed with an empty output. In the Vercel project, set **Root
+The repository uses Vercel's current Next.js framework detection rather than
+the legacy `builds` API. The install command activates pnpm 10 through Corepack
+before reading the v9-format lockfile. In the Vercel project, set **Root
 Directory** to `.` (the repository root) and disable overrides for Build
 Command, Install Command, and Output Directory so `vercel.json` remains
-authoritative. A successful deployment runs `pnpm install`, `next build`, and
-exposes `/api/health`; an 82 ms build with no install output means the Vercel
+authoritative. A successful deployment runs the Corepack install, `next build`,
+and exposes `/api/health`; a build with no install output means the Vercel
 project is still targeting the wrong Root Directory or has Skip Build enabled.
 
 Finance data is never migrated or cleared by a Vercel build. The existing D1

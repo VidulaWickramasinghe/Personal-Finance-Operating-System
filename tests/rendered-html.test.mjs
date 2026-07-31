@@ -26,7 +26,8 @@ test("supports Vercel builds and limits Codespaces port forwarding", async () =>
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
   ]);
   assert.equal(JSON.parse(vercel).framework, "nextjs");
-  assert.equal(JSON.parse(vercel).builds[0].use, "@vercel/next");
+  assert.equal(JSON.parse(vercel).builds, undefined);
+  assert.match(JSON.parse(vercel).installCommand, /corepack prepare pnpm@10\.28\.1/);
   assert.match(JSON.parse(vercel).installCommand, /pnpm install --frozen-lockfile/);
   assert.equal(JSON.parse(packageJson).dependencies.next, "16.2.6");
   assert.equal(JSON.parse(packageJson).packageManager, "pnpm@10.28.1");
