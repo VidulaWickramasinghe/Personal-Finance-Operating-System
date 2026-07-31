@@ -59,6 +59,21 @@ type ConfirmState = {
   id: string;
   label: string;
 } | null;
+type Preferences = {
+  displayName: string;
+  defaultCurrency: string;
+  timezone: string;
+  language: string;
+  theme: "light" | "dark" | "system";
+  billReminders: boolean;
+  budgetAlerts: boolean;
+  largeTransactionAlerts: boolean;
+  dashboardDensity: "comfortable" | "compact";
+  startPage: ModuleId;
+  showHealthScore: boolean;
+  showUpcomingBills: boolean;
+};
+const DEFAULT_PREFERENCES: Preferences = { displayName: "", defaultCurrency: "AUD", timezone: "Australia/Melbourne", language: "en-AU", theme: "system", billReminders: true, budgetAlerts: true, largeTransactionAlerts: true, dashboardDensity: "comfortable", startPage: "overview", showHealthScore: true, showUpcomingBills: true };
 
 const NAV_ITEMS: { id: ModuleId; label: string; glyph: string }[] = [
   { id: "overview", label: "Overview", glyph: "⌂" },
@@ -98,10 +113,6 @@ const EMPTY_FINANCE_DATA: FinanceData = {
   bills: [],
   activity: [],
 };
-
-function uniqueId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
 
 function toNumber(value: FormDataEntryValue | null, fallback = 0) {
   const parsed = Number(value);
@@ -361,17 +372,30 @@ function payloadForApi(kind: ResourceKind, value: any) {
   return value;
 }
 
-export default function CashflowApp({ userName }: { userName: string }) {
-  const [data, setData] = useState<FinanceData>(EMPTY_FINANCE_DATA);
-  const [active, setActive] = useState<ModuleId>("overview");
+export default function CashflowApp({
+  userName,
+  initialData,
+  initialPreferences,
+}: {
+  userName: string;
+  initialData?: unknown;
+  initialPreferences?: Partial<Preferences>;
+}) {
+  const hasInitialData = initialData !== undefined;
+  const [data, setData] = useState<FinanceData>(() =>
+    hasInitialData ? normalizeFinance(initialData) : EMPTY_FINANCE_DATA,
+  );
+  const seededPreferences = { ...DEFAULT_PREFERENCES, displayName: userName, ...initialPreferences };
+  const [active, setActive] = useState<ModuleId>(seededPreferences.startPage);
   const [editor, setEditor] = useState<EditorState>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedData, setHasLoadedData] = useState(false);
+  const [isLoading, setIsLoading] = useState(!hasInitialData);
+  const [hasLoadedData, setHasLoadedData] = useState(hasInitialData);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [preferences, setPreferences] = useState<Preferences>(seededPreferences);
   const [commandOpen, setCommandOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -380,8 +404,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetch("/api/finance", { cache: "no-store" });
+      const response = await fetch("/api/finance", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!response.ok) {
         const failure = await response
           .json()
@@ -395,20 +424,23 @@ export default function CashflowApp({ userName }: { userName: string }) {
       return true;
     } catch (error) {
       setLoadError(
-        error instanceof Error
+        error instanceof DOMException && error.name === "AbortError"
+          ? "Finance storage took too long to respond. Check the development server and try again."
+          : error instanceof Error
           ? error.message
           : "Could not load your finance data.",
       );
       return false;
     } finally {
+      window.clearTimeout(timeout);
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const task = window.setTimeout(() => void loadData(), 0);
+    const task = window.setTimeout(() => void loadData(hasInitialData), 0);
     return () => window.clearTimeout(task);
-  }, [loadData]);
+  }, [hasInitialData, loadData]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("cashflow-theme");
@@ -486,37 +518,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
   const saveResource = useCallback(
     async (kind: ResourceKind, item: any, editingId?: string) => {
       const resource = API_RESOURCE[kind];
-      const snapshot = data;
-      const id = editingId ?? item.id ?? uniqueId(kind.slice(0, 3));
-      const optimistic = { ...item, id };
-
-      if (kind === "transfer" && !editingId) {
-        const transfer = optimistic as Transfer;
-        setData((current) => ({
-          ...current,
-          transfers: [transfer, ...current.transfers],
-          accounts: current.accounts.map((account) => {
-            if (transfer.status !== "completed") return account;
-            if (account.id === transfer.fromAccountId) {
-              return { ...account, balance: account.balance - transfer.amount };
-            }
-            if (account.id === transfer.toAccountId) {
-              return { ...account, balance: account.balance + transfer.amount };
-            }
-            return account;
-          }),
-        }));
-      } else {
-        const listKey = RESOURCE_LIST[kind];
-        setData((current) => {
-          const list = current[listKey] as any[];
-          const nextList = editingId
-            ? list.map((existing) => (existing.id === editingId ? optimistic : existing))
-            : [optimistic, ...list];
-          return { ...current, [listKey]: nextList };
-        });
-      }
-
       setEditor(null);
       setIsSyncing(true);
       try {
@@ -525,7 +526,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
           {
             method: editingId ? "PATCH" : "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payloadForApi(kind, { ...item, id })),
+            body: JSON.stringify(payloadForApi(kind, { ...item })),
           },
         );
         if (!response.ok) {
@@ -543,7 +544,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
           tone: refreshed ? "success" : "info",
         });
       } catch (error) {
-        setData(snapshot);
         setToast({
           title: "Change not saved",
           detail: error instanceof Error ? error.message : "Please try again.",
@@ -553,18 +553,12 @@ export default function CashflowApp({ userName }: { userName: string }) {
         setIsSyncing(false);
       }
     },
-    [data, loadData],
+    [loadData],
   );
 
   const deleteResource = useCallback(async () => {
     if (!confirm) return;
     const { kind, id, label } = confirm;
-    const snapshot = data;
-    const listKey = RESOURCE_LIST[kind];
-    setData((current) => ({
-      ...current,
-      [listKey]: (current[listKey] as any[]).filter((item) => item.id !== id),
-    }));
     setConfirm(null);
     setIsSyncing(true);
     try {
@@ -586,7 +580,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
         tone: refreshed ? "success" : "info",
       });
     } catch (error) {
-      setData(snapshot);
       setToast({
         title: "Delete failed",
         detail: error instanceof Error ? error.message : "Please try again.",
@@ -595,17 +588,10 @@ export default function CashflowApp({ userName }: { userName: string }) {
     } finally {
       setIsSyncing(false);
     }
-  }, [confirm, data, loadData]);
+  }, [confirm, loadData]);
 
   const markBillPaid = useCallback(
     async (bill: Bill) => {
-      const snapshot = data;
-      setData((current) => ({
-        ...current,
-        bills: current.bills.map((item) =>
-          item.id === bill.id ? { ...item, status: "paid" } : item,
-        ),
-      }));
       setIsSyncing(true);
       try {
         const response = await fetch(`/api/finance/bills/${bill.id}/pay`, {
@@ -621,7 +607,6 @@ export default function CashflowApp({ userName }: { userName: string }) {
           tone: refreshed ? "success" : "info",
         });
       } catch (error) {
-        setData(snapshot);
         setToast({
           title: "Payment update failed",
           detail: error instanceof Error ? error.message : "Please try again.",
@@ -631,18 +616,27 @@ export default function CashflowApp({ userName }: { userName: string }) {
         setIsSyncing(false);
       }
     },
-    [data, loadData],
+    [loadData],
   );
 
   const duplicateResource = (kind: Exclude<ResourceKind, "transfer">, id: string) =>
     setEditor({ kind, mode: "duplicate", id });
+
+  const savePreferences = useCallback(async (next: Preferences) => {
+    const response = await fetch("/api/finance/preferences", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+    if (!response.ok) throw new Error("Unable to save workspace preferences.");
+    setPreferences(next);
+    if (next.theme !== "system") setTheme(next.theme);
+    setSettingsOpen(false);
+    setToast({ title: "Preferences saved", detail: "Your private workspace settings are stored securely.", tone: "success" });
+  }, []);
 
   const activeLabel = NAV_ITEMS.find((item) => item.id === active)?.label ?? "Overview";
   const overdueCount = data.bills.filter((bill) => bill.status === "overdue").length;
   const blockingLoadError = Boolean(loadError && !hasLoadedData);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell density-${preferences.dashboardDensity}`}>
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="sidebar" aria-label="Primary navigation">
         <div className="brand">
@@ -747,6 +741,7 @@ export default function CashflowApp({ userName }: { userName: string }) {
               onNavigate={setActive}
               onEdit={openEditor}
               onAssistant={() => setAssistantOpen(true)}
+              preferences={preferences}
             />
           ) : null}
           {!isLoading && !blockingLoadError && active === "transactions" ? (
@@ -759,19 +754,13 @@ export default function CashflowApp({ userName }: { userName: string }) {
               }
               onDuplicate={(id) => duplicateResource("transaction", id)}
               onBulkDelete={async (ids) => {
-                const snapshot = data;
-                setData((current) => ({
-                  ...current,
-                  transactions: current.transactions.filter((item) => !ids.includes(item.id)),
-                }));
                 const response = await fetch("/api/finance/transactions/bulk", {
                   method: "DELETE",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ ids }),
                 });
                 if (!response.ok) {
-                  setData(snapshot);
-                  setToast({ title: "Bulk delete failed", detail: "Your records were restored.", tone: "danger" });
+                  setToast({ title: "Bulk delete failed", detail: "No records were removed from the dashboard.", tone: "danger" });
                   return;
                 }
                 const refreshed = await loadData(true);
@@ -919,10 +908,11 @@ export default function CashflowApp({ userName }: { userName: string }) {
       ) : null}
       {settingsOpen ? (
         <SettingsPanel
-          userName={userName}
-          theme={theme}
+          userName={preferences.displayName || userName}
           onTheme={setTheme}
           onClose={() => setSettingsOpen(false)}
+          onSavePreferences={savePreferences}
+          preferences={preferences}
         />
       ) : null}
       {toast ? <ToastMessage toast={toast} onClose={() => setToast(null)} /> : null}
@@ -1048,12 +1038,14 @@ function OverviewView({
   onNavigate,
   onEdit,
   onAssistant,
+  preferences,
 }: {
   data: FinanceData;
   userName: string;
   onNavigate: (module: ModuleId) => void;
   onEdit: (state: EditorState) => void;
   onAssistant: () => void;
+  preferences: Preferences;
 }) {
   if (!data.accounts.length) {
     return (
@@ -1187,7 +1179,7 @@ function OverviewView({
             />
           ))}
         </div>
-        <div className="health-block">
+        {preferences.showHealthScore ? <div className="health-block">
           <div className="health-ring" style={{ "--score": `${score * 3.6}deg` } as React.CSSProperties}>
             <span><strong>{hasMonthlyActivity ? score : "—"}</strong><small>{hasMonthlyActivity ? "/ 100" : "Add data"}</small></span>
           </div>
@@ -1197,7 +1189,7 @@ function OverviewView({
             <small>{hasMonthlyActivity ? "Based on cash flow, budgets and bills" : "Add this month’s income and expenses"}</small>
           </div>
           <button aria-label="View health details">›</button>
-        </div>
+        </div> : null}
       </section>
 
       <section className="metric-grid" aria-label="Monthly metrics">
@@ -1211,7 +1203,7 @@ function OverviewView({
         <button onClick={() => onNavigate("budgets")}><span className="metric-icon neutral">◒</span><span><small>Budget remaining</small><strong>{currency(budgets.remaining)}</strong></span><b>›</b></button>
         <button onClick={() => onNavigate("goals")}><span className="metric-icon positive">◎</span><span><small>Long-term savings</small><strong>{currency(savingsBalance)}</strong></span><b>›</b></button>
         <button onClick={() => onNavigate("accounts")}><span className="metric-icon danger">↓</span><span><small>Debt balance</small><strong>{currency(debtBalance)}</strong></span><b>›</b></button>
-        <button onClick={() => onNavigate("bills")}><span className="metric-icon warning">◷</span><span><small>Upcoming bills</small><strong>{currency(upcomingBillTotal)}</strong></span><b>›</b></button>
+        {preferences.showUpcomingBills ? <button onClick={() => onNavigate("bills")}><span className="metric-icon warning">◷</span><span><small>Upcoming bills</small><strong>{currency(upcomingBillTotal)}</strong></span><b>›</b></button> : null}
       </section>
 
       <section className="dashboard-grid">
@@ -1303,7 +1295,7 @@ function OverviewView({
           </div>
         </article>
 
-        <article className="card span-4">
+        {preferences.showUpcomingBills ? <article className="card span-4">
           <CardHeader title="Upcoming bills" detail={`${upcoming.length} due soon`} action={<button className="text-button" onClick={() => onNavigate("bills")}>Calendar ›</button>} />
           {upcoming.length ? <div className="upcoming-list">
             {upcoming.map((bill) => (
@@ -1314,7 +1306,7 @@ function OverviewView({
               </button>
             ))}
           </div> : <EmptyState glyph="◷" title="No upcoming bills" detail="Add a bill to keep due dates and payment reminders together." action={<button className="primary-button" onClick={() => onEdit({ kind: "bill", mode: "create" })}>Add bill</button>} />}
-        </article>
+        </article> : null}
 
         <article className="card span-4">
           <CardHeader title="Savings goals" detail="Building your future" action={<button className="text-button" onClick={() => onNavigate("goals")}>View goals ›</button>} />
@@ -2579,37 +2571,52 @@ function NotificationsPanel({ data, onClose }: { data: FinanceData; onClose: () 
 
 function SettingsPanel({
   userName,
-  theme,
   onTheme,
   onClose,
+  onSavePreferences,
+  preferences,
 }: {
   userName: string;
-  theme: "light" | "dark";
   onTheme: (theme: "light" | "dark") => void;
   onClose: () => void;
+  onSavePreferences: (preferences: Preferences) => Promise<void>;
+  preferences: Preferences;
 }) {
+  const [draft, setDraft] = useState(preferences);
+  const [saving, setSaving] = useState(false);
+  const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const save = () => { setSaving(true); void onSavePreferences(draft).catch(() => setSaving(false)); };
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div className="drawer-header"><div><span className="eyebrow">Workspace preferences</span><h2 id="settings-title">Settings</h2></div><button className="close-button" onClick={onClose} aria-label="Close settings">×</button></div>
         <div className="settings-body">
           <section className="profile-card"><span>WA</span><div><strong>{userName}</strong><small>Private CashFlow OS workspace</small></div><StatusPill tone="success">Secure</StatusPill></section>
+          <FormSection title="Personal account">
+            <Field label="Display name" className="span-2"><input value={draft.displayName} maxLength={80} onChange={(e) => update("displayName", e.target.value)} placeholder="Your name" /></Field>
+          </FormSection>
           <FormSection title="Regional settings">
-            <Field label="Currency"><select defaultValue="AUD"><option>AUD · Australian dollar</option><option>USD · US dollar</option><option>NZD · New Zealand dollar</option></select></Field>
-            <Field label="Timezone"><select defaultValue="Australia/Melbourne"><option>Australia/Melbourne</option><option>Australia/Sydney</option><option>Australia/Perth</option></select></Field>
-            <Field label="Language"><select defaultValue="English (Australia)"><option>English (Australia)</option><option>English (United States)</option></select></Field>
+            <Field label="Currency"><select value={draft.defaultCurrency} onChange={(e) => update("defaultCurrency", e.target.value)}><option value="AUD">AUD · Australian dollar</option><option value="USD">USD · US dollar</option><option value="NZD">NZD · New Zealand dollar</option><option value="EUR">EUR · Euro</option><option value="GBP">GBP · British pound</option><option value="JPY">JPY · Japanese yen</option></select></Field>
+            <Field label="Timezone"><select value={draft.timezone} onChange={(e) => update("timezone", e.target.value)}><option>Australia/Melbourne</option><option>Australia/Sydney</option><option>Australia/Perth</option><option>UTC</option></select></Field>
+            <Field label="Language"><select value={draft.language} onChange={(e) => update("language", e.target.value)}><option value="en-AU">English (Australia)</option><option value="en-US">English (United States)</option></select></Field>
           </FormSection>
           <FormSection title="Appearance">
-            <div className="theme-picker span-2"><button className={theme === "light" ? "active" : ""} onClick={() => onTheme("light")}><span>☀</span><strong>Light</strong><small>Bright and focused</small></button><button className={theme === "dark" ? "active" : ""} onClick={() => onTheme("dark")}><span>☾</span><strong>Dark</strong><small>Low-light comfort</small></button></div>
+            <div className="theme-picker span-2"><button className={draft.theme === "light" ? "active" : ""} onClick={() => { update("theme", "light"); onTheme("light"); }}><span>☀</span><strong>Light</strong><small>Bright and focused</small></button><button className={draft.theme === "dark" ? "active" : ""} onClick={() => { update("theme", "dark"); onTheme("dark"); }}><span>☾</span><strong>Dark</strong><small>Low-light comfort</small></button></div>
           </FormSection>
           <FormSection title="Notifications">
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Bill reminders</strong><small>Upcoming and overdue payments</small></span></label>
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Budget alerts</strong><small>80% and overspending thresholds</small></span></label>
-            <label className="check-option span-2"><input type="checkbox" defaultChecked /><span><strong>Large transaction alerts</strong><small>Unusual account movements</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.billReminders} onChange={(e) => update("billReminders", e.target.checked)} /><span><strong>Bill reminders</strong><small>Upcoming and overdue payments</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.budgetAlerts} onChange={(e) => update("budgetAlerts", e.target.checked)} /><span><strong>Budget alerts</strong><small>80% and overspending thresholds</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.largeTransactionAlerts} onChange={(e) => update("largeTransactionAlerts", e.target.checked)} /><span><strong>Large transaction alerts</strong><small>Unusual account movements</small></span></label>
+          </FormSection>
+          <FormSection title="Dashboard customisation">
+            <Field label="Start page"><select value={draft.startPage} onChange={(e) => update("startPage", e.target.value as ModuleId)}>{NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
+            <Field label="Layout density"><select value={draft.dashboardDensity} onChange={(e) => update("dashboardDensity", e.target.value as Preferences["dashboardDensity"])}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></Field>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.showHealthScore} onChange={(e) => update("showHealthScore", e.target.checked)} /><span><strong>Financial health score</strong><small>Show the dashboard health indicator.</small></span></label>
+            <label className="check-option span-2"><input type="checkbox" checked={draft.showUpcomingBills} onChange={(e) => update("showUpcomingBills", e.target.checked)} /><span><strong>Upcoming bills</strong><small>Show bill reminders on the overview.</small></span></label>
           </FormSection>
           <div className="security-settings"><span>⌾</span><div><strong>Private deployment protection</strong><p>Access is restricted to your account. Financial records are isolated by owner and encrypted in transit.</p></div></div>
         </div>
-        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={onClose}>Save preferences</button></div>
+        <div className="drawer-footer"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save preferences"}</button></div>
       </aside>
     </div>
   );
