@@ -26,6 +26,7 @@ test("supports Vercel builds and limits Codespaces port forwarding", async () =>
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
   ]);
   assert.equal(JSON.parse(vercel).framework, "nextjs");
+  assert.equal(JSON.parse(vercel).builds[0].use, "@vercel/next");
   assert.match(JSON.parse(vercel).installCommand, /pnpm install --frozen-lockfile/);
   assert.equal(JSON.parse(packageJson).dependencies.next, "16.2.6");
   assert.equal(JSON.parse(packageJson).packageManager, "pnpm@10.28.1");
@@ -33,6 +34,8 @@ test("supports Vercel builds and limits Codespaces port forwarding", async () =>
   assert.equal(JSON.parse(devcontainer).otherPortsAttributes.onAutoForward, "ignore");
   assert.match(vite, /clientPort: 443/);
   assert.match(nextConfig, /process\.env\.VERCEL === "1"/);
+  assert.match(nextConfig, /FINANCE_BACKEND_URL/);
+  assert.match(nextConfig, /source: "\/api\/finance\/:path\*"/);
 });
 
 test("ships product metadata and removes the temporary starter preview", async () => {

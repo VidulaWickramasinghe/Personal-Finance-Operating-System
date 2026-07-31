@@ -11,7 +11,7 @@
     "dev:prepare": "wrangler d1 migrations apply DB --local --config wrangler.jsonc",
     "build": "VERCEL=1 next build",
     "start": "next start",
-    "test": "next build && node --test tests/rendered-html.test.mjs",
+    "test": "pnpm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

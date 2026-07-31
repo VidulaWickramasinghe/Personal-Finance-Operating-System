@@ -55,3 +55,20 @@ module shim. The UI deploys successfully there, but persistent finance APIs
 still require the `DB` and `RECEIPTS` bindings supplied by OpenAI Sites or
 Cloudflare Workers; the app reports that storage is unavailable rather than
 substituting unsafe in-memory data.
+
+### Vercel project settings
+
+The repository includes an explicit `@vercel/next` builder so a deployment
+cannot succeed with an empty output. In the Vercel project, set **Root
+Directory** to `.` (the repository root) and disable overrides for Build
+Command, Install Command, and Output Directory so `vercel.json` remains
+authoritative. A successful deployment runs `pnpm install`, `next build`, and
+exposes `/api/health`; an 82 ms build with no install output means the Vercel
+project is still targeting the wrong Root Directory or has Skip Build enabled.
+
+Finance data is never migrated or cleared by a Vercel build. The existing D1
+and R2 data remains in the backend used by the Cloudflare deployment.
+Set the Vercel environment variable `FINANCE_BACKEND_URL` to the origin of that
+private Cloudflare/OpenAI Sites deployment (without a trailing slash). Next.js
+then proxies every `/api/finance/*` request to the existing D1/R2 backend, so
+Vercel uses the same saved records instead of creating or replacing data.
