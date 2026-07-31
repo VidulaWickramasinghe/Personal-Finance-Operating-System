@@ -30,6 +30,12 @@ pnpm run lint
 pnpm run build
 ```
 
+GitHub Codespaces forwards only port `3000`. The other ephemeral sockets are
+internal Workers runtime/debugger channels and are ignored by the checked-in
+dev-container configuration. Rebuild the container once after pulling this
+change. The Vite server also explicitly permits the forwarded HTTPS origin so
+browser modules and hot reload do not fail CORS checks.
+
 Generate a new D1 migration after changing `db/schema.ts`:
 
 ```bash
@@ -41,3 +47,9 @@ the authenticated workspace identity headers supplied by OpenAI Sites; local
 development uses a dedicated local identity. Financial records are stored in
 D1, receipts are stored in R2, and no demo accounts, transactions, budgets,
 goals, bills, or balances are inserted.
+
+Vercel builds use the standard Next.js output and a build-time Cloudflare
+module shim. The UI deploys successfully there, but persistent finance APIs
+still require the `DB` and `RECEIPTS` bindings supplied by OpenAI Sites or
+Cloudflare Workers; the app reports that storage is unavailable rather than
+substituting unsafe in-memory data.

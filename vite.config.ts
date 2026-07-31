@@ -44,9 +44,22 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      allowedHosts: [".app.github.dev"],
+      cors: {
+        origin: [
+          /^https:\/\/[-a-z0-9]+-3000\.app\.github\.dev$/,
+          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/,
+        ],
+      },
+      strictPort: true,
+      hmr: process.env.CODESPACES
+        ? { protocol: "wss", clientPort: 443 }
+        : undefined,
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       sites(),
